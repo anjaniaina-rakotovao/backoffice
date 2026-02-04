@@ -9,3 +9,8 @@ create table vehicule(
     id_type int references type(id_type),
     capacite int not null
 );
+
+create table nyavo(
+    id int serial primary key,
+    nom varchar(255) not null,
+);
