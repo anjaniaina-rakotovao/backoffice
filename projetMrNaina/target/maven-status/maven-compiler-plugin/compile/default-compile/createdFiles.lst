@@ -1,0 +1,9 @@
+test\ProductController.class
+Entity\Hotel.class
+controller\ReservationController.class
+repository\ReservationRepository.class
+test\UserController.class
+config\DBConfig.class
+repository\HotelRepository.class
+controller\HotelController.class
+Entity\Reservation.class
