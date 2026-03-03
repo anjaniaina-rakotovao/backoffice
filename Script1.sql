@@ -9,3 +9,11 @@ create table vehicule(
     id_type int references type(id_type),
     capacite int not null
 );
+
+--correction
+CREATE TABLE vehicule (
+    id SERIAL PRIMARY KEY,
+    reference VARCHAR(50) NOT NULL,
+    nbr_place INT NOT NULL CHECK (nbr_place > 0),
+    type CHAR(2) NOT NULL CHECK (type IN ('h', 'd', 'el', 'e'))
+);

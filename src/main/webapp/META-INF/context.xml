@@ -1,0 +1,8 @@
+<Context>
+  <!-- JNDI DataSource pour PostgreSQL -->
+  <Resource name="jdbc/ProjDB" auth="Container" type="javax.sql.DataSource"
+            driverClassName="org.postgresql.Driver"
+            url="jdbc:postgresql://localhost:5432/projetmrnaina"
+            username="postgres" password="root"
+            maxTotal="20" maxIdle="10" maxWaitMillis="10000"/>
+</Context>
