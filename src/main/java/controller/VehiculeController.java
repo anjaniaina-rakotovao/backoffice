@@ -5,31 +5,101 @@ import java.util.List;
 
 import annotation.AnnotationController;
 import annotation.AnnotationUrl;
+import annotation.GetMapping;
+import annotation.PostMapping;
+import annotation.RequestParam;
+import entity.Vehicule;
+import jakarta.servlet.http.HttpServletRequest;
+import methods.ModelVue;
 
 @AnnotationController(annotationName = "/vehicule")
 public class VehiculeController {
-    @AnnotationUrl(url = "/{id}")
-    public String getDept() {
-        return "Tongasoa ato amin'ny DeptController";
-    }
+   
 
-    @AnnotationUrl(url = "/list")
-    public String listVehicules() {
+    @GetMapping
+    @AnnotationUrl(url = "/get")
+    public ModelVue listVehicules(HttpServletRequest request) {
         try {
-            List<entity.Vehicule> vehs = model.VehiculeModel.findAll();
-            StringBuilder sb = new StringBuilder("<h1>Liste des véhicules</h1><ul>");
-            for (entity.Vehicule v : vehs) {
-                sb.append("<li>")
-                .append(v.getReference()).append(" - ")
-                .append(v.getNbrPlace()).append(" places - ")
-                .append(v.getType())
-                .append("</li>");
-            }
-            sb.append("</ul>");
-            return sb.toString();
+            List<Vehicule> vehs = model.VehiculeModel.findAll();
+            request.setAttribute("vehicles", vehs);
+            return new ModelVue("listProducts");
         } catch (SQLException e) {
             e.printStackTrace();
-            return "<h1>Erreur accès base de données</h1>";
+            return new ModelVue("error");
+        }
+    }
+
+    @GetMapping
+    @AnnotationUrl(url = "/add")
+    public ModelVue showAddForm() {
+        return new ModelVue("addProduct");
+    }
+
+    @PostMapping
+    @AnnotationUrl(url = "/add")
+    public ModelVue addVehicule(@RequestParam("reference") String reference,
+                                @RequestParam("nbrPlace") String nbrPlace,
+                                @RequestParam("type") String type,
+                                HttpServletRequest request) {
+        try {
+            Vehicule v = new Vehicule();
+            v.setReference(reference);
+            v.setNbrPlace(Integer.parseInt(nbrPlace));
+            v.setType(type);
+            model.VehiculeModel.save(v);
+            return listVehicules(request);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ModelVue("error");
+        }
+    }
+
+    @GetMapping
+    @AnnotationUrl(url = "/edit")
+    public ModelVue showEditForm(@RequestParam("id") String id, HttpServletRequest request) {
+        try {
+            int vehiculeId = Integer.parseInt(id);
+            Vehicule v = model.VehiculeModel.findById(vehiculeId);
+            request.setAttribute("vehicule", v);
+            return new ModelVue("updateProduct");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ModelVue("error");
+        }
+    }
+
+    @PostMapping
+    @AnnotationUrl(url = "/update")
+    public ModelVue updateVehicule(@RequestParam("id") String id,
+                                   @RequestParam("reference") String reference,
+                                   @RequestParam("nbrPlace") String nbrPlace,
+                                   @RequestParam("type") String type,
+                                   HttpServletRequest request) {
+        try {
+            int vehiculeId = Integer.parseInt(id);
+            Vehicule v = new Vehicule();
+            v.setId(vehiculeId);
+            v.setReference(reference);
+            v.setNbrPlace(Integer.parseInt(nbrPlace));
+            v.setType(type);
+            model.VehiculeModel.update(v);
+            return listVehicules(request);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ModelVue("error");
+        }
+    }
+
+    @GetMapping
+    @AnnotationUrl(url = "/delete")
+    public ModelVue deleteVehicule(@RequestParam("id") String id, HttpServletRequest request) {
+        try {
+            int vehiculeId = Integer.parseInt(id);
+            model.VehiculeModel.delete(vehiculeId);
+            return listVehicules(request);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ModelVue("error");
         }
     }
 }

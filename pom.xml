@@ -23,7 +23,7 @@
         <!-- Framework annotation dependency -->
         <dependency>
             <groupId>servlet</groupId>
-            <artifactId>framework</artifactId>
+            <artifactId>framework-anja</artifactId>
             <version>1.0.0</version>
         </dependency>
         <!-- Jakarta Servlet API -->
