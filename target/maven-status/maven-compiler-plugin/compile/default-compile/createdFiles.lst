@@ -1,4 +1,7 @@
+controller\ReservationController.class
+model\ReservationModel.class
+util\DB.class
+entity\Reservation.class
 model\VehiculeModel.class
 controller\VehiculeController.class
-util\DB.class
 entity\Vehicule.class
