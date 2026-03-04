@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -92,7 +93,9 @@ public class ReservationModel {
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reservation.getIdClient());
             ps.setInt(2, reservation.getNbrPassager());
-            ps.setString(3, reservation.getDateHeureArrivee());
+            // Convertir la chaîne en Timestamp (format attendu: YYYY-MM-DD HH:MM:SS)
+            Timestamp ts = Timestamp.valueOf(reservation.getDateHeureArrivee());
+            ps.setTimestamp(3, ts);
             ps.setInt(4, reservation.getIdHotelArrivee());
             ps.executeUpdate();
         }
@@ -107,7 +110,8 @@ public class ReservationModel {
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reservation.getIdClient());
             ps.setInt(2, reservation.getNbrPassager());
-            ps.setString(3, reservation.getDateHeureArrivee());
+            Timestamp ts = Timestamp.valueOf(reservation.getDateHeureArrivee());
+            ps.setTimestamp(3, ts);
             ps.setInt(4, reservation.getIdHotelArrivee());
             ps.setInt(5, reservation.getId());
             ps.executeUpdate();

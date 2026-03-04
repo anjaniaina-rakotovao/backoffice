@@ -11,6 +11,7 @@ import annotation.RequestParam;
 import entity.Vehicule;
 import jakarta.servlet.http.HttpServletRequest;
 import methods.ModelVue;
+import util.TokenValidator;
 
 @AnnotationController(annotationName = "/vehicule")
 public class VehiculeController {
@@ -19,6 +20,9 @@ public class VehiculeController {
     @GetMapping
     @AnnotationUrl(url = "/get")
     public ModelVue listVehicules(HttpServletRequest request) {
+        if (!TokenValidator.isValid(request)) {
+            return new ModelVue("error");
+        }
         try {
             List<Vehicule> vehs = model.VehiculeModel.findAll();
             request.setAttribute("vehicles", vehs);
@@ -31,7 +35,10 @@ public class VehiculeController {
 
     @GetMapping
     @AnnotationUrl(url = "/add")
-    public ModelVue showAddForm() {
+    public ModelVue showAddForm(HttpServletRequest request) {
+        if (!TokenValidator.isValid(request)) {
+            return new ModelVue("error");
+        }
         return new ModelVue("addProduct");
     }
 
@@ -41,6 +48,9 @@ public class VehiculeController {
                                 @RequestParam("nbrPlace") String nbrPlace,
                                 @RequestParam("type") String type,
                                 HttpServletRequest request) {
+        if (!TokenValidator.isValid(request)) {
+            return new ModelVue("error");
+        }
         try {
             Vehicule v = new Vehicule();
             v.setReference(reference);
@@ -57,6 +67,9 @@ public class VehiculeController {
     @GetMapping
     @AnnotationUrl(url = "/edit")
     public ModelVue showEditForm(@RequestParam("id") String id, HttpServletRequest request) {
+        if (!TokenValidator.isValid(request)) {
+            return new ModelVue("error");
+        }
         try {
             int vehiculeId = Integer.parseInt(id);
             Vehicule v = model.VehiculeModel.findById(vehiculeId);
@@ -75,6 +88,9 @@ public class VehiculeController {
                                    @RequestParam("nbrPlace") String nbrPlace,
                                    @RequestParam("type") String type,
                                    HttpServletRequest request) {
+        if (!TokenValidator.isValid(request)) {
+            return new ModelVue("error");
+        }
         try {
             int vehiculeId = Integer.parseInt(id);
             Vehicule v = new Vehicule();
@@ -93,6 +109,9 @@ public class VehiculeController {
     @GetMapping
     @AnnotationUrl(url = "/delete")
     public ModelVue deleteVehicule(@RequestParam("id") String id, HttpServletRequest request) {
+        if (!TokenValidator.isValid(request)) {
+            return new ModelVue("error");
+        }
         try {
             int vehiculeId = Integer.parseInt(id);
             model.VehiculeModel.delete(vehiculeId);
