@@ -11,7 +11,7 @@ import annotation.RequestParam;
 import entity.Vehicule;
 import jakarta.servlet.http.HttpServletRequest;
 import methods.ModelVue;
-import util.TokenValidator;
+import model.VehiculeModel;
 
 @AnnotationController(annotationName = "/vehicule")
 public class VehiculeController {
@@ -20,11 +20,8 @@ public class VehiculeController {
     @GetMapping
     @AnnotationUrl(url = "/get")
     public ModelVue listVehicules(HttpServletRequest request) {
-        if (!TokenValidator.isValid(request)) {
-            return new ModelVue("error");
-        }
         try {
-            List<Vehicule> vehs = model.VehiculeModel.findAll();
+            List<Vehicule> vehs = VehiculeModel.findAll();
             request.setAttribute("vehicles", vehs);
             return new ModelVue("listProducts");
         } catch (SQLException e) {
@@ -36,9 +33,6 @@ public class VehiculeController {
     @GetMapping
     @AnnotationUrl(url = "/add")
     public ModelVue showAddForm(HttpServletRequest request) {
-        if (!TokenValidator.isValid(request)) {
-            return new ModelVue("error");
-        }
         return new ModelVue("addProduct");
     }
 
@@ -48,15 +42,12 @@ public class VehiculeController {
                                 @RequestParam("nbrPlace") String nbrPlace,
                                 @RequestParam("type") String type,
                                 HttpServletRequest request) {
-        if (!TokenValidator.isValid(request)) {
-            return new ModelVue("error");
-        }
         try {
             Vehicule v = new Vehicule();
             v.setReference(reference);
             v.setNbrPlace(Integer.parseInt(nbrPlace));
             v.setType(type);
-            model.VehiculeModel.save(v);
+            VehiculeModel.save(v);
             return listVehicules(request);
         } catch (Exception e) {
             e.printStackTrace();
@@ -67,12 +58,9 @@ public class VehiculeController {
     @GetMapping
     @AnnotationUrl(url = "/edit")
     public ModelVue showEditForm(@RequestParam("id") String id, HttpServletRequest request) {
-        if (!TokenValidator.isValid(request)) {
-            return new ModelVue("error");
-        }
         try {
             int vehiculeId = Integer.parseInt(id);
-            Vehicule v = model.VehiculeModel.findById(vehiculeId);
+            Vehicule v = VehiculeModel.findById(vehiculeId);
             request.setAttribute("vehicule", v);
             return new ModelVue("updateProduct");
         } catch (Exception e) {
@@ -88,9 +76,6 @@ public class VehiculeController {
                                    @RequestParam("nbrPlace") String nbrPlace,
                                    @RequestParam("type") String type,
                                    HttpServletRequest request) {
-        if (!TokenValidator.isValid(request)) {
-            return new ModelVue("error");
-        }
         try {
             int vehiculeId = Integer.parseInt(id);
             Vehicule v = new Vehicule();
@@ -98,7 +83,7 @@ public class VehiculeController {
             v.setReference(reference);
             v.setNbrPlace(Integer.parseInt(nbrPlace));
             v.setType(type);
-            model.VehiculeModel.update(v);
+            VehiculeModel.update(v);
             return listVehicules(request);
         } catch (Exception e) {
             e.printStackTrace();
@@ -109,12 +94,9 @@ public class VehiculeController {
     @GetMapping
     @AnnotationUrl(url = "/delete")
     public ModelVue deleteVehicule(@RequestParam("id") String id, HttpServletRequest request) {
-        if (!TokenValidator.isValid(request)) {
-            return new ModelVue("error");
-        }
         try {
             int vehiculeId = Integer.parseInt(id);
-            model.VehiculeModel.delete(vehiculeId);
+            VehiculeModel.delete(vehiculeId);
             return listVehicules(request);
         } catch (Exception e) {
             e.printStackTrace();

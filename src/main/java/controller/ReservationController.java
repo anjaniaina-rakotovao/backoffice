@@ -12,6 +12,7 @@ import annotation.RequestParam;
 import entity.Reservation;
 import jakarta.servlet.http.HttpServletRequest;
 import methods.ModelVue;
+import model.AssignationModel;
 import model.LieuModel;
 import model.ReservationModel;
 import util.JsonError;
@@ -41,14 +42,11 @@ public class ReservationController {
 
     /**
      * Affiche le formulaire d'ajout de réservation
-     * GET /reservation/add?token=YOUR_TOKEN
+     * GET /reservation/add
      */
     @GetMapping
     @AnnotationUrl(url = "/add")
     public ModelVue showAddForm(HttpServletRequest request) {
-        if (!TokenValidator.isValid(request)) {
-            return new ModelVue("error");
-        }
         try {
             // Récupère la liste des hôtels et la place dans la requête pour la JSP
             request.setAttribute("hotels", LieuModel.findHotels());
@@ -60,7 +58,7 @@ public class ReservationController {
 
     /**
      * Traite l'ajout d'une nouvelle réservation
-     * POST /reservation/add?token=YOUR_TOKEN
+     * POST /reservation/add
      */
     @PostMapping
     @AnnotationUrl(url = "/add")
@@ -69,9 +67,6 @@ public class ReservationController {
                                    @RequestParam("dateHeureArrivee") String dateHeureArrivee,
                                    @RequestParam("idHotelArrivee") String idHotelArrivee,
                                    HttpServletRequest request) {
-        if (!TokenValidator.isValid(request)) {
-            return new ModelVue("error");
-        }
         try {
             Reservation r = new Reservation();
             r.setIdClient(idClient);
@@ -80,12 +75,24 @@ public class ReservationController {
             String formattedDate = dateHeureArrivee.replace("T", " ") + ":00"; // Ajoute les secondes si nécessaires
             r.setDateHeureArrivee(formattedDate);
             r.setIdHotelArrivee(Integer.parseInt(idHotelArrivee));
-            
+
             ReservationModel.save(r);
-            
-            // Affiche un message de succès et redirige vers la liste
-            request.setAttribute("message", "Réservation ajoutée avec succès!");
-            return new ModelVue("addReservation");
+
+            // Assigner automatiquement immédiatement après l'insertion (forcer avec SQL)
+            try {
+                boolean assigned = AssignationModel.forceAssignReservation(r);
+                if (!assigned) {
+                    System.out.println("ReservationController: forceAssignReservation did not find a vehicle for reservation " + r.getId());
+                }
+            } catch (Exception ex) {
+                System.out.println("Avertissement: impossible d'assigner automatiquement après insertion: " + ex.getMessage());
+            }
+
+            // Affiche le planning pour la date de la réservation afin de voir l'assignation
+            String planningDate = formattedDate.substring(0, 10); // YYYY-MM-DD
+            request.setAttribute("date", planningDate);
+            request.setAttribute("message", "Réservation ajoutée et assignée automatiquement si possible !");
+            return new controller.PlanningController().showPlanning(request);
         } catch (Exception e) {
             e.printStackTrace();
             request.setAttribute("error", "Une erreur lors de l'ajout : " + e.getMessage());
@@ -145,6 +152,41 @@ public class ReservationController {
         } catch (Exception e) {
             e.printStackTrace();
             return new JsonError("BAD_REQUEST", "Invalid ID format");
+        }
+    }
+
+    /**
+     * Endpoint de debug: force l'assignation pour une réservation existante (par id)
+     * POST /reservation/force-assign (form field: id)
+     */
+    @PostMapping
+    @AnnotationUrl(url = "/force-assign")
+    public ModelVue forceAssignById(HttpServletRequest request) {
+        try {
+            String idParam = request.getParameter("id");
+            if (idParam == null || idParam.trim().isEmpty()) {
+                request.setAttribute("error", "Paramètre id manquant");
+                return new ModelVue("addReservation");
+            }
+            int id = Integer.parseInt(idParam);
+            Reservation res = ReservationModel.findById(id);
+            if (res == null) {
+                request.setAttribute("error", "Réservation introuvable: " + id);
+                return new ModelVue("addReservation");
+            }
+            boolean assigned = AssignationModel.forceAssignReservation(res);
+            if (assigned) {
+                request.setAttribute("message", "Assignation forcée créée pour réservation " + id);
+            } else {
+                request.setAttribute("message", "Aucun véhicule trouvé pour réservation " + id);
+            }
+            // Afficher planning de la date
+            request.setAttribute("date", res.getDateHeureArrivee().substring(0,10));
+            return new PlanningController().showPlanning(request);
+        } catch (Exception e) {
+            e.printStackTrace();
+            request.setAttribute("error", "Erreur lors de l'assignation forcée: " + e.getMessage());
+            return new ModelVue("addReservation");
         }
     }
 }

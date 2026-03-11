@@ -2,7 +2,10 @@ controller\ReservationController.class
 model\ReservationModel.class
 model\LieuModel.class
 entity\Token.class
+entity\Assignation.class
+model\AssignationModel.class
 model\TokenModel.class
+controller\PlanningController.class
 util\DB.class
 util\JsonError.class
 entity\Reservation.class
