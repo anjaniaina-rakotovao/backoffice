@@ -180,29 +180,6 @@ public class ReservationModel {
                     reservation.setId(gk.getInt(1));
                 }
             }
-
-            // assignation automatique
-            try {
-
-                boolean assigned = AssignationModel.forceAssignReservation(reservation);
-
-                if (assigned) {
-                    System.out.println(
-                            "ReservationModel.save: assignation créée pour reservation="
-                                    + reservation.getId());
-                } else {
-                    System.out.println(
-                            "ReservationModel.save: aucun véhicule correspondant pour reservation="
-                                    + reservation.getId());
-                }
-
-            } catch (SQLException ex) {
-
-                System.out.println(
-                        "ReservationModel.save: erreur lors de l'assignation automatique: "
-                                + ex.getMessage());
-
-            }
         }
     }
 

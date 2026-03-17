@@ -2,6 +2,8 @@ package controller;
 
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
 
 import annotation.AnnotationController;
 import annotation.AnnotationUrl;
@@ -63,36 +65,24 @@ public class ReservationController {
     @PostMapping
     @AnnotationUrl(url = "/add")
     public ModelVue addReservation(@RequestParam("idClient") String idClient,
-                                   @RequestParam("nbrPassager") String nbrPassager,
-                                   @RequestParam("dateHeureArrivee") String dateHeureArrivee,
-                                   @RequestParam("idHotelArrivee") String idHotelArrivee,
-                                   HttpServletRequest request) {
+            @RequestParam("nbrPassager") String nbrPassager,
+            @RequestParam("dateHeureArrivee") String dateHeureArrivee,
+            @RequestParam("idHotelArrivee") String idHotelArrivee,
+            HttpServletRequest request) {
         try {
             Reservation r = new Reservation();
             r.setIdClient(idClient);
             r.setNbrPassager(Integer.parseInt(nbrPassager));
-            // Convertir le format datetime-local (YYYY-MM-DDTHH:mm) en format compatible avec PostgreSQL
+            // Convertir le format datetime-local (YYYY-MM-DDTHH:mm) en format compatible
+            // avec PostgreSQL
             String formattedDate = dateHeureArrivee.replace("T", " ") + ":00"; // Ajoute les secondes si nécessaires
             r.setDateHeureArrivee(formattedDate);
             r.setIdHotelArrivee(Integer.parseInt(idHotelArrivee));
 
             ReservationModel.save(r);
 
-            // Assigner automatiquement immédiatement après l'insertion (forcer avec SQL)
-            try {
-                boolean assigned = AssignationModel.forceAssignReservation(r);
-                if (!assigned) {
-                    System.out.println("ReservationController: forceAssignReservation did not find a vehicle for reservation " + r.getId());
-                }
-            } catch (Exception ex) {
-                System.out.println("Avertissement: impossible d'assigner automatiquement après insertion: " + ex.getMessage());
-            }
-
-            // Affiche le planning pour la date de la réservation afin de voir l'assignation
-            String planningDate = formattedDate.substring(0, 10); // YYYY-MM-DD
-            request.setAttribute("date", planningDate);
-            request.setAttribute("message", "Réservation ajoutée et assignée automatiquement si possible !");
-            return new controller.PlanningController().showPlanning(request);
+            request.setAttribute("message", "Réservation ajoutée avec succès !");
+            return showReservationPage(request);
         } catch (Exception e) {
             e.printStackTrace();
             request.setAttribute("error", "Une erreur lors de l'ajout : " + e.getMessage());
@@ -102,6 +92,26 @@ public class ReservationController {
                 // ignore
             }
             return new ModelVue("addReservation");
+        }
+    }
+
+    /**
+     * Affiche la liste HTML de toutes les réservations
+     * GET /reservation/page
+     */
+    @GetMapping
+    @AnnotationUrl(url = "/page")
+    public ModelVue showReservationPage(HttpServletRequest request) {
+        try {
+            List<Reservation> reservations = ReservationModel.findAll();
+            Set<Integer> assignedIds = AssignationModel.findAllAssignedReservationIds();
+            request.setAttribute("reservations", reservations);
+            request.setAttribute("assignedIds", assignedIds);
+            return new ModelVue("listReservations");
+        } catch (Exception e) {
+            e.printStackTrace();
+            request.setAttribute("error", "Erreur lors du chargement : " + e.getMessage());
+            return new ModelVue("error");
         }
     }
 
@@ -156,7 +166,8 @@ public class ReservationController {
     }
 
     /**
-     * Endpoint de debug: force l'assignation pour une réservation existante (par id)
+     * Endpoint de debug: force l'assignation pour une réservation existante (par
+     * id)
      * POST /reservation/force-assign (form field: id)
      */
     @PostMapping
@@ -181,7 +192,7 @@ public class ReservationController {
                 request.setAttribute("message", "Aucun véhicule trouvé pour réservation " + id);
             }
             // Afficher planning de la date
-            request.setAttribute("date", res.getDateHeureArrivee().substring(0,10));
+            request.setAttribute("date", res.getDateHeureArrivee().substring(0, 10));
             return new PlanningController().showPlanning(request);
         } catch (Exception e) {
             e.printStackTrace();
