@@ -201,36 +201,92 @@
     <meta charset="UTF-8">
     <title>Planification des Véhicules</title>
     <style>
-        * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background-color: #f5f5f5; padding: 20px; }
-        .container { max-width: 1400px; margin: 0 auto; background-color: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background-color: #f5f5f5; }
+        
+        /* Navigation bar */
+        .navbar { background-color: #007bff; padding: 0; margin: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .navbar-content { max-width: 1400px; margin: 0 auto; display: flex; align-items: center;
+                          justify-content: space-between; padding: 12px 20px; }
+        .navbar-brand { color: white; font-size: 18px; font-weight: bold; text-decoration: none; }
+        .navbar-menu { display: flex; gap: 15px; }
+        .navbar-menu a { color: white; text-decoration: none; padding: 8px 12px;
+                         border-radius: 4px; transition: background 0.2s; }
+        .navbar-menu a:hover { background-color: rgba(255,255,255,0.2); }
+        
+        .container { max-width: 1400px; margin: 20px auto; background-color: white; 
+                     padding: 25px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         h1 { text-align: center; color: #333; margin-bottom: 10px; }
-        .filter-section { background: #007bff; padding: 15px; border-radius: 8px; margin-bottom: 25px; color: white; }
+        .filter-section { background: #007bff; padding: 15px; border-radius: 8px; 
+                         margin-bottom: 25px; color: white; }
         .filter-section form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
         .filter-section input { padding: 8px 12px; border-radius: 4px; border: none; }
-        .filter-section button { padding: 8px 15px; border-radius: 4px; border: none; background-color: #28a745; color: white; cursor: pointer; }
+        .filter-section button { padding: 8px 15px; border-radius: 4px; border: none; 
+                                background-color: #28a745; color: white; cursor: pointer; }
         .filter-section button:hover { background-color: #218838; }
-        .planning-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; align-items: start; }
-        .vehicle-card { border: 2px solid #007bff; border-radius: 10px; overflow: hidden; background: #fafafa; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        
+        .planning-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); 
+                        gap: 20px; align-items: start; }
+        .vehicle-card { border: 2px solid #007bff; border-radius: 10px; overflow: hidden; 
+                       background: #fafafa; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .vehicle-header { background: #007bff; color: white; padding: 14px; }
         .vehicle-title { font-size: 18px; font-weight: bold; margin-bottom: 4px; }
         .vehicle-subtitle { font-size: 13px; opacity: 0.95; }
         .vehicle-body { padding: 14px; }
-        .vehicle-specs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+        
+        .vehicle-specs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); 
+                        gap: 10px; margin-bottom: 14px; }
         .spec-item { background: #eef4ff; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
         .spec-label { display: block; color: #555; margin-bottom: 4px; }
         .spec-value { color: #007bff; font-weight: bold; }
-        .reservations-title { font-size: 14px; font-weight: bold; color: #333; margin-bottom: 10px; }
-        .reservation-item { background: #e7f3ff; border-left: 4px solid #28a745; padding: 8px 10px; margin-bottom: 8px; font-size: 12px; border-radius: 4px; }
+        
+        .route-section { background: #f0f8ff; border-left: 4px solid #007bff; 
+                        padding: 12px; margin-bottom: 14px; border-radius: 4px; }
+        .route-title { font-size: 13px; font-weight: bold; color: #333; margin-bottom: 8px; }
+        .route-path { font-size: 12px; color: #555; line-height: 1.6; word-break: break-word; }
+        .route-item { display: inline; }
+        .route-arrow { display: inline; color: #007bff; font-weight: bold; margin: 0 4px; }
+        
+        .airport-arrival { background: #fff3cd; border-left: 4px solid #ffc107; 
+                          padding: 10px; margin-bottom: 14px; border-radius: 4px; }
+        .airport-label { font-size: 12px; font-weight: bold; color: #856404; }
+        .airport-time { font-size: 14px; color: #333; font-weight: bold; }
+        
+        .reservations-title { font-size: 14px; font-weight: bold; color: #333; 
+                             margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px solid #007bff; }
+        .reservation-item { background: #e7f3ff; border-left: 4px solid #28a745; 
+                           padding: 8px 10px; margin-bottom: 8px; font-size: 12px; border-radius: 4px; }
+        .reservation-item p { margin: 2px 0; }
         .no-reservation { font-style: italic; color: #999; padding: 10px 0; }
+        
+        .empty-msg { text-align: center; padding: 20px; color: #999; font-style: italic; }
+        
+        .alert { padding: 12px; border-radius: 4px; margin-bottom: 15px; }
+        .alert-error { background-color: #f8d7da; color: #721c24; }
+        .alert-success { background-color: #d4edda; color: #155724; }
+        
         @media (max-width: 640px) {
             .container { padding: 16px; }
             .planning-grid { grid-template-columns: 1fr; }
             .vehicle-specs { grid-template-columns: 1fr; }
+            .navbar-content { flex-direction: column; gap: 10px; align-items: flex-start; }
         }
     </style>
 </head>
 <body>
+    <!-- Navigation bar -->
+    <nav class="navbar">
+        <div class="navbar-content">
+            <a href="<%= request.getContextPath() %>" class="navbar-brand">🚗 Gestion de Réservations</a>
+            <div class="navbar-menu">
+                <a href="<%= request.getContextPath() %>/planning/vehicules">📅 Planning</a>
+                <a href="<%= request.getContextPath() %>/reservation/page">📋 Réservations</a>
+                <a href="<%= request.getContextPath() %>/vehicule/get">🚐 Véhicules</a>
+                <a href="<%= request.getContextPath() %>/reservation/add">➕ Ajouter Réservation</a>
+            </div>
+        </div>
+    </nav>
+
     <div class="container">
         <h1>📅 Planification des Véhicules</h1>
 
@@ -243,14 +299,10 @@
         %>
 
         <% if(errorMessage != null){ %>
-            <div style="background-color:#f8d7da;color:#721c24;padding:10px;border-radius:4px;margin-bottom:15px;">
-                ⚠️ <%= errorMessage %>
-            </div>
+            <div class="alert alert-error">⚠️ <%= errorMessage %></div>
         <% } %>
         <% if(message != null){ %>
-            <div style="background-color:#d4edda;color:#155724;padding:10px;border-radius:4px;margin-bottom:15px;">
-                ✅ <%= message %>
-            </div>
+            <div class="alert alert-success">✅ <%= message %></div>
         <% } %>
 
         <div class="filter-section">
@@ -266,6 +318,9 @@
                 <% for(Map<String,Object> vData : planningData){
                     Vehicule v = (Vehicule) vData.get("vehicule");
                     List<Reservation> reservations = (List<Reservation>) vData.get("reservations");
+                    @SuppressWarnings("unchecked")
+                    List<Lieu> route = (List<Lieu>) vData.get("route");
+                    String airportArrivalTime = (String) vData.get("airportArrivalTime");
                 %>
                 <div class="vehicle-card">
                     <div class="vehicle-header">
@@ -283,15 +338,39 @@
                                 <span class="spec-value"><%= v.getType() %></span>
                             </div>
                         </div>
+                        
+                        <!-- Afficher le trajet -->
+                        <% if(route != null && !route.isEmpty()){ %>
+                            <div class="route-section">
+                                <div class="route-title">📍 Trajet Optimisé:</div>
+                                <div class="route-path">
+                                    <% for(int i = 0; i < route.size(); i++){ 
+                                        Lieu l = route.get(i);
+                                    %>
+                                        <span class="route-item"><%= l.getLibelle() %></span>
+                                        <% if(i < route.size() - 1){ %>
+                                            <span class="route-arrow"> → </span>
+                                        <% } %>
+                                    <% } %>
+                                </div>
+                            </div>
+                        <% } %>
+                        
+                        <!-- Afficher l'heure d'arrivée à l'aéroport -->
+                        <% if(airportArrivalTime != null){ %>
+                            <div class="airport-arrival">
+                                <div class="airport-label">✈️ Retour à l'Aéroport:</div>
+                                <div class="airport-time"><%= airportArrivalTime %></div>
+                            </div>
+                        <% } %>
 
-                        <div class="reservations-title">Réservations liées</div>
-
+                        <div class="reservations-title">👥 Réservations liées</div>
                         <% if(reservations != null && !reservations.isEmpty()){ %>
                             <% for(Reservation r : reservations){ %>
                                 <div class="reservation-item">
-                                    👤 Client: <strong><%= r.getIdClient() %></strong><br>
-                                    🚶 Passagers: <strong><%= r.getNbrPassager() %></strong><br>
-                                    ⏰ Arrivée: <%= r.getDateHeureArrivee() %>
+                                    <p>👤 Client: <strong><%= r.getIdClient() %></strong></p>
+                                    <p>🚶 Passagers: <strong><%= r.getNbrPassager() %></strong></p>
+                                    <p>⏰ Arrivée: <%= r.getDateHeureArrivee() %></p>
                                 </div>
                             <% } %>
                         <% } else { %>
@@ -302,9 +381,9 @@
                 <% } %>
             </div>
         <% } else if(date != null) { %>
-            <div class="no-reservation">📭 Aucune réservation trouvée pour cette date.</div>
+            <div class="empty-msg">📭 Aucune réservation trouvée pour cette date.</div>
         <% } else { %>
-            <div class="no-reservation">📭 Choisissez une date pour voir le planning des véhicules.</div>
+            <div class="empty-msg">📭 Choisissez une date pour voir le planning des véhicules.</div>
         <% } %>
 
     </div>

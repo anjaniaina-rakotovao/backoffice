@@ -6,9 +6,20 @@
     <meta charset="UTF-8">
     <title>Liste des Réservations</title>
     <style>
-        * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background-color: #f5f5f5; margin: 20px; }
-        .container { max-width: 1100px; margin: 0 auto; background: white;
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background-color: #f5f5f5; }
+        
+        /* Navigation bar */
+        .navbar { background-color: #007bff; padding: 0; margin: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .navbar-content { max-width: 1100px; margin: 0 auto; display: flex; align-items: center;
+                          justify-content: space-between; padding: 12px 20px; }
+        .navbar-brand { color: white; font-size: 18px; font-weight: bold; text-decoration: none; }
+        .navbar-menu { display: flex; gap: 15px; }
+        .navbar-menu a { color: white; text-decoration: none; padding: 8px 12px;
+                         border-radius: 4px; transition: background 0.2s; }
+        .navbar-menu a:hover { background-color: rgba(255,255,255,0.2); }
+        
+        .container { max-width: 1100px; margin: 20px auto; background: white;
                      padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1 { color: #333; text-align: center; margin-bottom: 20px; }
         .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
@@ -38,6 +49,17 @@
     </style>
 </head>
 <body>
+<div class="navbar">
+    <div class="navbar-content">
+        <a href="<%= request.getContextPath() %>" class="navbar-brand">🚗 Gestion de Réservations</a>
+        <div class="navbar-menu">
+            <a href="<%= request.getContextPath() %>/planning/vehicules">📅 Planning</a>
+            <a href="<%= request.getContextPath() %>/reservation/page">📋 Réservations</a>
+            <a href="<%= request.getContextPath() %>/vehicule/get">🚐 Véhicules</a>
+            <a href="<%= request.getContextPath() %>/reservation/add">➕ Ajouter Réservation</a>
+        </div>
+    </div>
+</div>
 <div class="container">
     <h1>📋 Liste des Réservations</h1>
 

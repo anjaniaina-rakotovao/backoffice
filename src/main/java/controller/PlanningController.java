@@ -11,11 +11,13 @@ import annotation.AnnotationUrl;
 import annotation.GetMapping;
 import annotation.PostMapping;
 import entity.Assignation;
+import entity.Lieu;
 import entity.Reservation;
 import entity.Vehicule;
 import jakarta.servlet.http.HttpServletRequest;
 import methods.ModelVue;
 import model.AssignationModel;
+import model.LieuModel;
 import model.ReservationModel;
 import model.VehiculeModel;
 
@@ -80,6 +82,40 @@ public class PlanningController {
                 if (!vehiculeReservations.isEmpty()) {
                     data.put("reservations", vehiculeReservations);
                     data.put("assignations", vAssignations);
+
+                    // Calculer le trajet optimal et l'heure d'arrivée à l'aéroport
+                    try {
+                        List<Lieu> hotelLieux = new ArrayList<>();
+                        for (Reservation r : vehiculeReservations) {
+                            Lieu hotel = LieuModel.findById(r.getIdHotelArrivee());
+                            if (hotel != null) {
+                                hotelLieux.add(hotel);
+                            }
+                        }
+                        List<Lieu> route = AssignationModel.computeOptimalRoute(hotelLieux);
+                        data.put("route", route);
+
+                        // Estimer l'heure d'arrivée à l'aéroport selon la distance totale du trajet
+                        // et une vitesse moyenne fixe.
+                        long estimatedMinutes = AssignationModel.estimateAirportReturnMinutes(route);
+
+                        if (!vehiculeReservations.isEmpty()) {
+                            String firstArrival = vehiculeReservations.get(0).getDateHeureArrivee();
+                            try {
+                                java.time.LocalDateTime departure = java.time.LocalDateTime
+                                        .parse(firstArrival.replace(" ", "T"));
+                                java.time.LocalDateTime airportReturn = departure.plusMinutes(estimatedMinutes);
+                                data.put("airportArrivalTime", airportReturn.toString().replace("T", " "));
+                            } catch (Exception e) {
+                                data.put("airportArrivalTime", "--:--");
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        data.put("route", new ArrayList<>());
+                        data.put("airportArrivalTime", "N/A");
+                    }
+
                     planningData.add(data);
                 }
             }

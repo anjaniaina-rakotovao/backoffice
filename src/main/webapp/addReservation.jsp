@@ -5,7 +5,21 @@
 <head>
     <title>Ajouter une Réservation</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background-color: #f5f5f5; }
+        
+        /* Navigation bar */
+        .navbar { background-color: #007bff; padding: 0; margin: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .navbar-content { max-width: 600px; margin: 0 auto; display: flex; align-items: center;
+                          justify-content: space-between; padding: 12px 20px; }
+        .navbar-brand { color: white; font-size: 18px; font-weight: bold; text-decoration: none; }
+        .navbar-menu { display: flex; gap: 15px; }
+        .navbar-menu a { color: white; text-decoration: none; padding: 8px 12px;
+                         border-radius: 4px; transition: background 0.2s; }
+        .navbar-menu a:hover { background-color: rgba(255,255,255,0.2); }
+        
+        body { margin: 0; }
+        .site-container { margin: 20px auto; }
         .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1 { color: #333; text-align: center; }
         .form-group { margin-bottom: 20px; }
@@ -22,6 +36,17 @@
     </style>
 </head>
 <body>
+<nav class="navbar">
+    <div class="navbar-content">
+        <a href="<%= request.getContextPath() %>" class="navbar-brand">🚗 Gestion de Réservations</a>
+        <div class="navbar-menu">
+            <a href="<%= request.getContextPath() %>/planning/vehicules">📅 Planning</a>
+            <a href="<%= request.getContextPath() %>/reservation/page">📋 Réservations</a>
+            <a href="<%= request.getContextPath() %>/vehicule/get">🚐 Véhicules</a>
+        </div>
+    </div>
+</nav>
+<div class="site-container">
 <div class="container">
     <h1>Ajouter une nouvelle Réservation</h1>
     <%
@@ -87,6 +112,7 @@
             <button type="button" class="btn-cancel" onclick="window.history.back();">Annuler</button>
         </div>
     </form>
+</div>
 </div>
 </body>
 </html>

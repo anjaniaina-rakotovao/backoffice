@@ -14,11 +14,14 @@ import java.util.Random;
 import java.util.Set;
 
 import entity.Assignation;
+import entity.Lieu;
 import entity.Reservation;
 import entity.Vehicule;
 import util.DB;
 
 public class AssignationModel {
+
+    private static final double AVERAGE_SPEED_KMH = 50.0;
 
     /**
      * Récupère toutes les assignations pour une date donnée
@@ -182,7 +185,8 @@ public class AssignationModel {
 
         // Récupère tous les véhicules une seule fois
         List<Vehicule> allVehicles = VehiculeModel.findAll();
-        // Charge initiale: places déjà occupées par des réservations déjà assignées ce jour.
+        // Charge initiale: places déjà occupées par des réservations déjà assignées ce
+        // jour.
         Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
 
         for (Reservation res : reservations) {
@@ -196,7 +200,8 @@ public class AssignationModel {
             // Règle prioritaire: remplir d'abord les véhicules déjà entamés.
             Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, res.getNbrPassager());
             if (selected == null) {
-                // Aucun véhicule partiellement rempli ne convient: on ouvre alors la sélection globale.
+                // Aucun véhicule partiellement rempli ne convient: on ouvre alors la sélection
+                // globale.
                 selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
             }
             System.out.println("Reservation " + res.getId() + " nbrPassager=" + res.getNbrPassager()
@@ -403,7 +408,8 @@ public class AssignationModel {
             // 🚨 Correction : passer la date de réservation comme date_depart
             assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee());
         } else {
-            System.out.println("autoAssignForReservation: no vehicle with remaining seats for reservation " + res.getId());
+            System.out.println(
+                    "autoAssignForReservation: no vehicle with remaining seats for reservation " + res.getId());
         }
     }
 
@@ -578,5 +584,104 @@ public class AssignationModel {
         }
 
         return list;
+    }
+
+    /**
+     * Calcule le trajet optimal pour un ensemble de lieux (hôtels)
+     * en utilisant l'algorithme Nearest Neighbor à partir de l'aéroport.
+     * Tri alphabétique en cas d'égalité de distance.
+     * Retourne une liste de lieux triés : départ -> ... -> aéroport (retour)
+     */
+    public static List<Lieu> computeOptimalRoute(List<Lieu> hotels) throws SQLException {
+        if (hotels == null || hotels.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // Récupère l'aéroport
+        Lieu airport = LieuModel.findAirport();
+        if (airport == null) {
+            // Pas d'aéroport trouvé, retourner les hôtels dans l'ordre alphabétique
+            hotels.sort((a, b) -> a.getLibelle().compareTo(b.getLibelle()));
+            return hotels;
+        }
+
+        List<Lieu> route = new ArrayList<>();
+        Set<Integer> visited = new HashSet<>();
+
+        // Ajouter l'aéroport comme point de départ
+        route.add(airport);
+        visited.add(airport.getId());
+
+        int currentId = airport.getId();
+
+        // Nearest Neighbor: sélectionner le lieu le plus proche non visité
+        while (visited.size() < hotels.size() + 1) {
+            Lieu nextLieu = null;
+            double minDistance = Double.MAX_VALUE;
+
+            // Récupérer les distances depuis le lieu actuel
+            Map<Integer, Double> distances = LieuModel.getDistancesFrom(currentId);
+
+            for (Lieu hotel : hotels) {
+                if (visited.contains(hotel.getId())) {
+                    continue;
+                }
+
+                double dist = distances.getOrDefault(hotel.getId(), Double.MAX_VALUE);
+
+                // Tie-break: si même distance, ordonner alphabétiquement
+                if (dist < minDistance || (dist == minDistance && nextLieu != null &&
+                        hotel.getLibelle().compareTo(nextLieu.getLibelle()) < 0)) {
+                    minDistance = dist;
+                    nextLieu = hotel;
+                }
+            }
+
+            if (nextLieu != null) {
+                route.add(nextLieu);
+                visited.add(nextLieu.getId());
+                currentId = nextLieu.getId();
+            } else {
+                break;
+            }
+        }
+
+        // Retourner à l'aéroport
+        route.add(airport);
+
+        return route;
+    }
+
+    /**
+     * Estime le temps total du trajet en minutes à partir des distances réelles
+     * avec une vitesse moyenne fixe.
+     */
+    public static long estimateAirportReturnMinutes(List<Lieu> route) throws SQLException {
+        if (route == null || route.size() < 2) {
+            return 0L;
+        }
+
+        double totalDistanceKm = 0.0;
+
+        for (int i = 0; i < route.size() - 1; i++) {
+            Lieu from = route.get(i);
+            Lieu to = route.get(i + 1);
+            if (from == null || to == null) {
+                continue;
+            }
+
+            double distance = LieuModel.getDistance(from.getId(), to.getId());
+
+            // Fallback simple si la route inverse est la seule renseignée en base.
+            if (distance == Double.MAX_VALUE) {
+                distance = LieuModel.getDistance(to.getId(), from.getId());
+            }
+
+            if (distance != Double.MAX_VALUE) {
+                totalDistanceKm += distance;
+            }
+        }
+
+        return Math.max(0L, Math.round((totalDistanceKm / AVERAGE_SPEED_KMH) * 60.0));
     }
 }
