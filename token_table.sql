@@ -20,6 +20,6 @@ CREATE TABLE IF NOT EXISTS token (
   date_expiration TIMESTAMP NOT NULL
 );
 
--- Exemple d'insertion (PostgreSQL) : génère un UUID et l'expire dans 7 jours
+-- Exemple d'insertion (PostgreSQL) : génère un UUID et l'expire dans 70 jours
 INSERT INTO token (token, date_expiration)
-VALUES (gen_random_uuid()::text, NOW() + INTERVAL '7 days');
+VALUES (gen_random_uuid()::text, NOW() + INTERVAL '70 days');

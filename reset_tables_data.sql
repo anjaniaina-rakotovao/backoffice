@@ -10,7 +10,6 @@ reservation,
 distance,
 lieu,
 vehicule,
-"type",
 token RESTART IDENTITY CASCADE;
 
 COMMIT;

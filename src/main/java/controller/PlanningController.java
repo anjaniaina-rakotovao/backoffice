@@ -77,10 +77,11 @@ public class PlanningController {
 
                 }
 
-                data.put("reservations", vehiculeReservations);
-                data.put("assignations", vAssignations);
-
-                planningData.add(data);
+                if (!vehiculeReservations.isEmpty()) {
+                    data.put("reservations", vehiculeReservations);
+                    data.put("assignations", vAssignations);
+                    planningData.add(data);
+                }
             }
 
             request.setAttribute("planningData", planningData);

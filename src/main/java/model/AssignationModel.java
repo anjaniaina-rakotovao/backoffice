@@ -182,6 +182,8 @@ public class AssignationModel {
 
         // Récupère tous les véhicules une seule fois
         List<Vehicule> allVehicles = VehiculeModel.findAll();
+        // Charge initiale: places déjà occupées par des réservations déjà assignées ce jour.
+        Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
 
         for (Reservation res : reservations) {
             // Vérifie si cette réservation a déjà une assignation
@@ -191,33 +193,22 @@ public class AssignationModel {
                 continue;
             }
 
-            // Étape 1 : essayer de remplir un véhicule déjà partiellement utilisé ce jour
-            Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
-            Vehicule partial = findPartiallyFilledVehicle(allVehicles, vehicleLoad, res.getNbrPassager());
-
-            if (partial != null) {
-                System.out.println("Reservation " + res.getId()
-                        + ": remplissage du véhicule partiel id=" + partial.getId());
-                assignVehicle(partial.getId(), res.getId(), res.getDateHeureArrivee());
-            } else {
-                // Étape 2 : aucun véhicule partiel disponible, choisir un nouveau véhicule
-                List<Vehicule> available = findAvailableVehicles(res.getDateHeureArrivee(), res.getNbrPassager());
-                System.out.println("Reservation " + res.getId() + " nbrPassager=" + res.getNbrPassager()
-                        + " availableVehicles=" + (available == null ? 0 : available.size()));
-
-                if (available == null || available.isEmpty()) {
-                    System.out.println("Aucun véhicule disponible pour réservation " + res.getId());
-                    continue;
-                }
-
-                Vehicule selected = selectBestVehicle(available, res.getNbrPassager());
-                System.out.println("Reservation " + res.getId() + " véhicule sélectionné: "
-                        + (selected != null ? selected.getId() : "null"));
-
-                if (selected != null) {
-                    assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee());
-                }
+            // Règle prioritaire: remplir d'abord les véhicules déjà entamés.
+            Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, res.getNbrPassager());
+            if (selected == null) {
+                // Aucun véhicule partiellement rempli ne convient: on ouvre alors la sélection globale.
+                selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
             }
+            System.out.println("Reservation " + res.getId() + " nbrPassager=" + res.getNbrPassager()
+                    + " véhicule sélectionné=" + (selected != null ? selected.getId() : "null"));
+
+            if (selected == null) {
+                System.out.println("Aucun véhicule avec places disponibles pour réservation " + res.getId());
+                continue;
+            }
+
+            assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee());
+            vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + res.getNbrPassager());
         }
     }
 
@@ -252,22 +243,91 @@ public class AssignationModel {
      */
     private static Vehicule findPartiallyFilledVehicle(List<Vehicule> allVehicles,
             Map<Integer, Integer> vehicleLoad, int nbrPassager) {
-        Vehicule best = null;
+        List<Vehicule> bestCandidates = new ArrayList<>();
         int bestRemaining = Integer.MAX_VALUE;
+
         for (Vehicule v : allVehicles) {
             int currentLoad = vehicleLoad.getOrDefault(v.getId(), 0);
             if (currentLoad == 0)
                 continue; // pas encore utilisé ce jour
+
             int remaining = v.getNbrPlace() - currentLoad;
             if (remaining >= nbrPassager) {
                 int remainingAfter = remaining - nbrPassager;
                 if (remainingAfter < bestRemaining) {
                     bestRemaining = remainingAfter;
-                    best = v;
+                    bestCandidates.clear();
+                    bestCandidates.add(v);
+                } else if (remainingAfter == bestRemaining) {
+                    bestCandidates.add(v);
                 }
             }
         }
-        return best;
+
+        return pickByTypeThenRandom(bestCandidates);
+    }
+
+    /**
+     * Sélectionne le meilleur véhicule en tenant compte des places déjà occupées.
+     * - véhicule admissible: capacité restante >= nbrPassager
+     * - priorité: places restantes minimales après affectation
+     * - tie-break: diesel, puis aléatoire
+     */
+    private static Vehicule selectBestVehicleByRemainingSeats(List<Vehicule> allVehicles,
+            Map<Integer, Integer> vehicleLoad, int nbrPassager) {
+        List<Vehicule> candidates = new ArrayList<>();
+        int bestRemainingAfter = Integer.MAX_VALUE;
+
+        for (Vehicule v : allVehicles) {
+            int occupied = vehicleLoad.getOrDefault(v.getId(), 0);
+            int remaining = v.getNbrPlace() - occupied;
+            if (remaining < nbrPassager) {
+                continue;
+            }
+
+            int remainingAfter = remaining - nbrPassager;
+            if (remainingAfter < bestRemainingAfter) {
+                bestRemainingAfter = remainingAfter;
+                candidates.clear();
+                candidates.add(v);
+            } else if (remainingAfter == bestRemainingAfter) {
+                candidates.add(v);
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        return pickByTypeThenRandom(candidates);
+    }
+
+    /**
+     * Départage final: préférence diesel, puis tirage aléatoire.
+     */
+    private static Vehicule pickByTypeThenRandom(List<Vehicule> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+
+        List<Vehicule> dieselCandidates = new ArrayList<>();
+        for (Vehicule v : candidates) {
+            String t = v.getType();
+            if (t != null) {
+                t = t.trim();
+            }
+            if (t != null && (t.equalsIgnoreCase("d") || t.equalsIgnoreCase("diesel"))) {
+                dieselCandidates.add(v);
+            }
+        }
+
+        Random rnd = new Random();
+        if (!dieselCandidates.isEmpty()) {
+            return dieselCandidates.get(rnd.nextInt(dieselCandidates.size()));
+        }
+        return candidates.get(rnd.nextInt(candidates.size()));
     }
 
     /**
@@ -333,20 +393,17 @@ public class AssignationModel {
             return; // déjà assignée
         }
 
-        // Récupère les véhicules disponibles pour ce créneau
-        List<Vehicule> available = findAvailableVehicles(res.getDateHeureArrivee(), res.getNbrPassager());
-        System.out
-                .println("autoAssignForReservation: available vehicles=" + (available == null ? 0 : available.size()));
-        if (available == null || available.isEmpty()) {
-            System.out.println("autoAssignForReservation: no vehicles available for reservation " + res.getId());
-            return; // pas de véhicule disponible
-        }
+        String date = res.getDateHeureArrivee().substring(0, 10);
+        List<Vehicule> allVehicles = VehiculeModel.findAll();
+        Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
+        Vehicule selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
 
-        Vehicule selected = selectBestVehicle(available, res.getNbrPassager());
         System.out.println("autoAssignForReservation: selected=" + (selected != null ? selected.getId() : "null"));
         if (selected != null) {
             // 🚨 Correction : passer la date de réservation comme date_depart
             assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee());
+        } else {
+            System.out.println("autoAssignForReservation: no vehicle with remaining seats for reservation " + res.getId());
         }
     }
 
@@ -395,107 +452,23 @@ public class AssignationModel {
         if (res == null)
             return false;
 
-        String dateHeure = res.getDateHeureArrivee();
-        int nbrPass = res.getNbrPassager();
+        String date = res.getDateHeureArrivee().substring(0, 10);
+        List<Vehicule> allVehicles = VehiculeModel.findAll();
+        Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
+        Vehicule selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
 
-        String sql = "SELECT v.id " +
-                "FROM vehicule v " +
-                "WHERE v.nbr_place >= ? " +
-                "AND v.id NOT IN ( " +
-                "   SELECT id_vehicule " +
-                "   FROM assignation " +
-                "   WHERE date_depart IS NULL " +
-                "   OR date_depart > ? " +
-                ") " +
-                "ORDER BY (v.nbr_place - ?) ASC, " +
-                "CASE WHEN LOWER(TRIM(v.type)) IN ('d','diesel') THEN 0 ELSE 1 END ASC, " +
-                "RANDOM() " +
-                "LIMIT 1";
-
-        try (Connection c = DB.getConnection();
-                PreparedStatement ps = c.prepareStatement(sql)) {
-
-            Timestamp ts = Timestamp.valueOf(dateHeure);
-
-            ps.setInt(1, nbrPass);
-            ps.setTimestamp(2, ts);
-            ps.setInt(3, nbrPass);
-
-            try (ResultSet rs = ps.executeQuery()) {
-
-                if (rs.next()) {
-                    int vehId = rs.getInt(1);
-
-                    // 🚨 Correction : passer la date de réservation comme date_depart
-                    assignVehicle(vehId, res.getId(), res.getDateHeureArrivee());
-
-                    System.out.println(
-                            "forceAssignReservation: assignation created veh="
-                                    + vehId + " res=" + res.getId());
-
-                    return true;
-                } else {
-
-                    System.out.println(
-                            "forceAssignReservation: aucun véhicule disponible pour res="
-                                    + res.getId());
-
-                }
-            }
+        if (selected != null) {
+            // 🚨 Correction : passer la date de réservation comme date_depart
+            assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee());
+            System.out.println("forceAssignReservation: assignation created veh="
+                    + selected.getId() + " res=" + res.getId());
+            return true;
         }
+
+        System.out.println("forceAssignReservation: aucun véhicule avec places disponibles pour res="
+                + res.getId());
 
         return false;
-    }
-
-    /**
-     * Sélectionne le meilleur véhicule selon les règles:
-     * 1. Moins de places restantes
-     * 2. Si égal, diesel
-     * 3. Si tous diesel, random
-     */
-    private static Vehicule selectBestVehicle(List<Vehicule> vehicles, int nbrPassager) {
-        if (vehicles == null || vehicles.isEmpty())
-            return null;
-        if (vehicles.size() == 1)
-            return vehicles.get(0);
-
-        // Trouver le nombre minimal de places restantes
-        int minRemainingPlaces = Integer.MAX_VALUE;
-        for (Vehicule v : vehicles) {
-            int remaining = v.getNbrPlace() - nbrPassager;
-            if (remaining < minRemainingPlaces) {
-                minRemainingPlaces = remaining;
-            }
-        }
-
-        // Collecter véhicules ayant ce nombre minimal de places restantes
-        List<Vehicule> candidates = new ArrayList<>();
-        for (Vehicule v : vehicles) {
-            int remaining = v.getNbrPlace() - nbrPassager;
-            if (remaining == minRemainingPlaces) {
-                candidates.add(v);
-            }
-        }
-
-        // Préférer les véhicules diesel (type 'd' ou 'diesel')
-        List<Vehicule> dieselCandidates = new ArrayList<>();
-        for (Vehicule v : candidates) {
-            String t = v.getType();
-            if (t != null)
-                t = t.trim();
-            if (t != null && (t.equalsIgnoreCase("d") || t.equalsIgnoreCase("diesel"))) {
-                dieselCandidates.add(v);
-            }
-        }
-
-        Random rnd = new Random();
-        if (!dieselCandidates.isEmpty()) {
-            // Si plusieurs diesel, choisir aléatoirement parmi eux
-            return dieselCandidates.get(rnd.nextInt(dieselCandidates.size()));
-        }
-
-        // Sinon, si plusieurs candidats non-diesel, choisir aléatoirement
-        return candidates.get(rnd.nextInt(candidates.size()));
     }
 
     /**
