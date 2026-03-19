@@ -1,0 +1,65 @@
+================================================================================
+MODIFICATION REQUISE: AssignationModel.java - Ligne ~285-300
+================================================================================
+
+LOCALISATION:
+Fichier: src/main/java/model/AssignationModel.java
+Fonction: autoAssignVehicles()
+Après la stratégie 2 (selectBestVehicleByRemainingSeats avec work.remainingPassengers)
+
+ANCIEN CODE:
+────────────────────────────────────────────────────────────────────────────────
+                    // Stratégie 2 : Si pas de partiellement rempli, chercher le meilleur fit
+                    if (selected == null) {
+                        selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, 
+                                work.remainingPassengers, date);
+                    }
+
+                    if (selected != null) {
+────────────────────────────────────────────────────────────────────────────────
+
+NOUVEAU CODE:
+────────────────────────────────────────────────────────────────────────────────
+                    // Stratégie 2 : Si pas de partiellement rempli, chercher le meilleur fit
+                    if (selected == null) {
+                        selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, 
+                                work.remainingPassengers, date);
+                    }
+
+                    // Stratégie 3 : Si aucun véhicule ne peut contenir la réservation entièrement,
+                    // chercher au moins 1 place pour fragmenter minimalement
+                    // Cela garantit que les petites réservations sont fragmentées EN PRIORITÉ
+                    if (selected == null) {
+                        selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, 1, date);
+                    }
+
+                    if (selected != null) {
+────────────────────────────────────────────────────────────────────────────────
+
+EFFET:
+──────
+Cette modification ajoute une 3ème stratégie qui garantit que même si aucun véhicule
+ne peut contenir une réservation ENTIÈREMENT, on cherche au moins 1 place libre pour
+assigner minimalement.
+
+Comme le tri est CROISSANT (petites réservations d'abord), cela signifie que:
+
+Exemple: Véhicule 10 places + [8, 3, 1] personnes
+┌────────────────────────────────────────────┐
+│ Itération 1: Trier [1, 3, 8]               │
+│ - Réservation 1: trouvé véhicule → 1 OK   │
+│ - Réservation 3: trouvé → 3 OK             │
+│ - Réservation 8: assigné entièrement       │
+│ Résultat: Véhicule PLEIN 10/10             │
+├────────────────────────────────────────────┤
+│ Si scenario différent:                     │
+│ Itération 1: Trier [1, 3, 8]               │
+│ - Réservation 1: cherche best-fit(1)       │
+│   → Stratégie 3: cherche au moins 1 place  │
+│   → Assigne 1 (complètement)                │
+│ - Réservation 3: reçoit prochaine place   │
+│   → Jamais fragmentée avant la 1           │
+└────────────────────────────────────────────┘
+
+GARANTIE: Les petites réservations sont TOUJOURS fragmentées EN PRIORITÉ
+================================================================================

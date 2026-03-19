@@ -311,6 +311,10 @@
                 <input type="date" id="date" name="date" value="<%= date != null ? date : "" %>" required>
                 <button type="submit">Afficher</button>
             </form>
+            <form method="post" action="<%= request.getContextPath() %>/planning/auto-assign" style="margin-top:10px;">
+                <input type="hidden" name="date" value="<%= date != null ? date : "" %>">
+                <button type="submit">Lancer assignation automatique</button>
+            </form>
         </div>
 
         <% if(planningData != null && !planningData.isEmpty()){ %>
@@ -318,6 +322,8 @@
                 <% for(Map<String,Object> vData : planningData){
                     Vehicule v = (Vehicule) vData.get("vehicule");
                     List<Reservation> reservations = (List<Reservation>) vData.get("reservations");
+                    List<Assignation> assignations = (List<Assignation>) vData.get("assignations");
+                    Integer tripCount = (Integer) vData.get("tripCount");
                     @SuppressWarnings("unchecked")
                     List<Lieu> route = (List<Lieu>) vData.get("route");
                     String airportArrivalTime = (String) vData.get("airportArrivalTime");
@@ -336,6 +342,10 @@
                             <div class="spec-item">
                                 <span class="spec-label">Type</span>
                                 <span class="spec-value"><%= v.getType() %></span>
+                            </div>
+                            <div class="spec-item">
+                                <span class="spec-label">Trajets du jour</span>
+                                <span class="spec-value"><%= tripCount != null ? tripCount : 0 %></span>
                             </div>
                         </div>
                         
@@ -366,10 +376,14 @@
 
                         <div class="reservations-title">👥 Réservations liées</div>
                         <% if(reservations != null && !reservations.isEmpty()){ %>
-                            <% for(Reservation r : reservations){ %>
+                            <% for(int i = 0; i < reservations.size(); i++){
+                                Reservation r = reservations.get(i);
+                                Assignation a = (assignations != null && i < assignations.size()) ? assignations.get(i) : null;
+                            %>
                                 <div class="reservation-item">
                                     <p>👤 Client: <strong><%= r.getIdClient() %></strong></p>
-                                    <p>🚶 Passagers: <strong><%= r.getNbrPassager() %></strong></p>
+                                    <p>🚶 Passagers assignés: <strong><%= a != null ? a.getNbrPassagerAssigne() : r.getNbrPassager() %></strong>
+                                       / Réservation: <strong><%= r.getNbrPassager() %></strong></p>
                                     <p>⏰ Arrivée: <%= r.getDateHeureArrivee() %></p>
                                 </div>
                             <% } %>

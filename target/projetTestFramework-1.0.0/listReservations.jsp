@@ -40,6 +40,8 @@
         tr:hover { background-color: #e9f0ff; }
         .badge-assigned   { background: #28a745; color: white; padding: 3px 9px;
                             border-radius: 12px; font-size: 12px; }
+        .badge-partial    { background: #fd7e14; color: white; padding: 3px 9px;
+                    border-radius: 12px; font-size: 12px; }
         .badge-unassigned { background: #ffc107; color: #333; padding: 3px 9px;
                             border-radius: 12px; font-size: 12px; }
         .alert { padding: 12px 16px; border-radius: 4px; margin-bottom: 15px; }
@@ -104,7 +106,11 @@
         Map<String, List<Reservation>> reservationGroups = (Map<String, List<Reservation>>) request.getAttribute("reservationGroups");
         @SuppressWarnings("unchecked")
         Set<Integer> assignedIds = (Set<Integer>) request.getAttribute("assignedIds");
+        @SuppressWarnings("unchecked")
+        Map<Integer, Integer> assignedPassengersByReservation =
+            (Map<Integer, Integer>) request.getAttribute("assignedPassengersByReservation");
         if (assignedIds == null) assignedIds = new java.util.HashSet<>();
+        if (assignedPassengersByReservation == null) assignedPassengersByReservation = new java.util.HashMap<>();
     %>
 
     <% if (reservationGroups != null && !reservationGroups.isEmpty()) { %>
@@ -131,7 +137,9 @@
                 </thead>
                 <tbody>
                     <% for (Reservation r : groupReservations) {
-                        boolean assigned = assignedIds.contains(r.getId());
+                        int assignedPassengers = assignedPassengersByReservation.getOrDefault(r.getId(), 0);
+                        boolean assigned = assignedPassengers >= r.getNbrPassager();
+                        boolean partial = assignedPassengers > 0 && assignedPassengers < r.getNbrPassager();
                     %>
                     <tr>
                         <td><%= r.getId() %></td>
@@ -142,6 +150,8 @@
                         <td>
                             <% if (assigned) { %>
                                 <span class="badge-assigned">Assigné</span>
+                            <% } else if (partial) { %>
+                                <span class="badge-partial">Partiel (<%= assignedPassengers %>/<%= r.getNbrPassager() %>)</span>
                             <% } else { %>
                                 <span class="badge-unassigned">Non assigné</span>
                             <% } %>
@@ -166,7 +176,9 @@
         </thead>
         <tbody>
             <% for (Reservation r : reservations) {
-                boolean assigned = assignedIds.contains(r.getId());
+                int assignedPassengers = assignedPassengersByReservation.getOrDefault(r.getId(), 0);
+                boolean assigned = assignedPassengers >= r.getNbrPassager();
+                boolean partial = assignedPassengers > 0 && assignedPassengers < r.getNbrPassager();
             %>
             <tr>
                 <td><%= r.getId() %></td>
@@ -177,6 +189,8 @@
                 <td>
                     <% if (assigned) { %>
                         <span class="badge-assigned">Assigné</span>
+                    <% } else if (partial) { %>
+                        <span class="badge-partial">Partiel (<%= assignedPassengers %>/<%= r.getNbrPassager() %>)</span>
                     <% } else { %>
                         <span class="badge-unassigned">Non assigné</span>
                     <% } %>

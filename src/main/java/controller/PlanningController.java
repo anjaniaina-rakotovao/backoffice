@@ -58,6 +58,7 @@ public class PlanningController {
                 Map<String, Object> data = new HashMap<>();
 
                 data.put("vehicule", v);
+                data.put("tripCount", AssignationModel.countTripsByVehicleAndDate(v.getId(), date));
 
                 List<Reservation> vehiculeReservations = new ArrayList<>();
                 List<Assignation> vAssignations = new ArrayList<>();

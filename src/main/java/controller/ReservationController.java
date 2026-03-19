@@ -107,10 +107,13 @@ public class ReservationController {
         try {
             List<Reservation> reservations = ReservationModel.findAll();
             Set<Integer> assignedIds = AssignationModel.findAllAssignedReservationIds();
+            Map<Integer, Integer> assignedPassengersByReservation = AssignationModel
+                    .findAssignedPassengerCountByReservation();
             Map<String, List<Reservation>> reservationGroups = AssignationModel
                     .groupReservationsByInterval(reservations);
             request.setAttribute("reservations", reservations);
             request.setAttribute("assignedIds", assignedIds);
+            request.setAttribute("assignedPassengersByReservation", assignedPassengersByReservation);
             request.setAttribute("reservationGroups",
                     reservationGroups != null ? reservationGroups : new LinkedHashMap<>());
             return new ModelVue("listReservations");
