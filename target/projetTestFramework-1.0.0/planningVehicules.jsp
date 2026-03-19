@@ -202,7 +202,25 @@
     <title>Planification des Véhicules</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, sans-serif; background-color: #f5f5f5; }
+        body { font-family: Arial, sans-serif; background-color: #f5f5f5; padding-top: 118px; }
+
+        .top-fixed {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            z-index: 1000;
+        }
+
+        .etu-banner {
+            background-color: #0b2e59;
+            color: #ffffff;
+            text-align: center;
+            padding: 8px 12px;
+            font-size: 14px;
+            font-weight: bold;
+            letter-spacing: 0.4px;
+        }
         
         /* Navigation bar */
         .navbar { background-color: #007bff; padding: 0; margin: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -266,26 +284,31 @@
         .alert-success { background-color: #d4edda; color: #155724; }
         
         @media (max-width: 640px) {
+            body { padding-top: 156px; }
             .container { padding: 16px; }
             .planning-grid { grid-template-columns: 1fr; }
             .vehicle-specs { grid-template-columns: 1fr; }
             .navbar-content { flex-direction: column; gap: 10px; align-items: flex-start; }
+            .etu-banner { font-size: 13px; line-height: 1.4; }
         }
     </style>
 </head>
 <body>
-    <!-- Navigation bar -->
-    <nav class="navbar">
-        <div class="navbar-content">
-            <a href="<%= request.getContextPath() %>" class="navbar-brand">🚗 Gestion de Réservations</a>
-            <div class="navbar-menu">
-                <a href="<%= request.getContextPath() %>/planning/vehicules">📅 Planning</a>
-                <a href="<%= request.getContextPath() %>/reservation/page">📋 Réservations</a>
-                <a href="<%= request.getContextPath() %>/vehicule/get">🚐 Véhicules</a>
-                <a href="<%= request.getContextPath() %>/reservation/add">➕ Ajouter Réservation</a>
+    <div class="top-fixed">
+        <div class="etu-banner">ETU3130 | ETU3158 | ETU3160</div>
+        <!-- Navigation bar -->
+        <nav class="navbar">
+            <div class="navbar-content">
+                <a href="<%= request.getContextPath() %>" class="navbar-brand">🚗 Gestion de Réservations</a>
+                <div class="navbar-menu">
+                    <a href="<%= request.getContextPath() %>/planning/vehicules">📅 Planning</a>
+                    <a href="<%= request.getContextPath() %>/reservation/page">📋 Réservations</a>
+                    <a href="<%= request.getContextPath() %>/vehicule/get">🚐 Véhicules</a>
+                    <a href="<%= request.getContextPath() %>/reservation/add">➕ Ajouter Réservation</a>
+                </div>
             </div>
-        </div>
-    </nav>
+        </nav>
+    </div>
 
     <div class="container">
         <h1>📅 Planification des Véhicules</h1>
