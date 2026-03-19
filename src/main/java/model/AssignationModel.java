@@ -5,13 +5,20 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
 
 import entity.Assignation;
 import entity.Lieu;
@@ -22,6 +29,10 @@ import util.DB;
 public class AssignationModel {
 
     private static final double AVERAGE_SPEED_KMH = 50.0;
+    private static final int WAITING_TIME_MINUTES = 30;
+    private static final LocalTime GROUPING_START_TIME = LocalTime.of(8, 0);
+    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
     /**
      * Récupère toutes les assignations pour une date donnée
@@ -176,12 +187,13 @@ public class AssignationModel {
     // }
 
     public static void autoAssignVehicles(String date) throws SQLException {
-        // Récupère et trie les réservations par nombre de passagers décroissant (plus
-        // grand groupe en premier)
         List<Reservation> reservations = ReservationModel.findByDateString(date);
-        reservations.sort((a, b) -> b.getNbrPassager() - a.getNbrPassager());
         System.out.println("autoAssignVehicles: " + reservations.size()
-                + " réservations pour date=" + date + " (triées par nbr_passager DESC)");
+                + " réservations pour date=" + date + " (groupement=" + WAITING_TIME_MINUTES + " min)");
+
+        if (reservations.isEmpty()) {
+            return;
+        }
 
         // Récupère tous les véhicules une seule fois
         List<Vehicule> allVehicles = VehiculeModel.findAll();
@@ -189,32 +201,131 @@ public class AssignationModel {
         // jour.
         Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
 
-        for (Reservation res : reservations) {
-            // Vérifie si cette réservation a déjà une assignation
-            Assignation existing = findByReservation(res.getId());
-            if (existing != null) {
-                System.out.println("Reservation " + res.getId() + " déjà assignée -> skip");
-                continue;
+        TreeMap<LocalDateTime, List<Reservation>> groupedByInterval = groupByIntervalInternal(reservations);
+        List<Reservation> pending = new ArrayList<>();
+
+        for (Map.Entry<LocalDateTime, List<Reservation>> intervalEntry : groupedByInterval.entrySet()) {
+            LocalDateTime intervalStart = intervalEntry.getKey();
+            List<Reservation> currentIntervalReservations = intervalEntry.getValue();
+
+            List<Reservation> toProcess = new ArrayList<>(pending);
+            toProcess.addAll(currentIntervalReservations);
+            toProcess.sort((a, b) -> Integer.compare(b.getNbrPassager(), a.getNbrPassager()));
+
+            LocalDateTime departureDateTime = findLatestArrival(currentIntervalReservations);
+            if (departureDateTime == null) {
+                departureDateTime = intervalStart;
+            }
+            String departureForInterval = departureDateTime.format(DATE_TIME_FORMATTER);
+
+            System.out.println("Intervalle " + intervalStart + " : " + toProcess.size()
+                    + " réservations à traiter (" + pending.size() + " en priorité reportée)");
+
+            List<Reservation> nextPending = new ArrayList<>();
+
+            for (Reservation res : toProcess) {
+                Assignation existing = findByReservation(res.getId());
+                if (existing != null) {
+                    continue;
+                }
+
+                // Règle prioritaire: remplir d'abord les véhicules déjà entamés.
+                Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, res.getNbrPassager());
+                if (selected == null) {
+                    // Aucun véhicule partiellement rempli ne convient: on ouvre alors la sélection
+                    // globale.
+                    selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
+                }
+
+                if (selected == null) {
+                    nextPending.add(res);
+                    continue;
+                }
+
+                // Le départ est fixé à la dernière arrivée du groupement courant.
+                assignVehicle(selected.getId(), res.getId(), departureForInterval);
+                vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + res.getNbrPassager());
             }
 
-            // Règle prioritaire: remplir d'abord les véhicules déjà entamés.
-            Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, res.getNbrPassager());
-            if (selected == null) {
-                // Aucun véhicule partiellement rempli ne convient: on ouvre alors la sélection
-                // globale.
-                selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
-            }
-            System.out.println("Reservation " + res.getId() + " nbrPassager=" + res.getNbrPassager()
-                    + " véhicule sélectionné=" + (selected != null ? selected.getId() : "null"));
-
-            if (selected == null) {
-                System.out.println("Aucun véhicule avec places disponibles pour réservation " + res.getId());
-                continue;
-            }
-
-            assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee());
-            vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + res.getNbrPassager());
+            pending = nextPending;
         }
+
+        if (!pending.isEmpty()) {
+            System.out.println("autoAssignVehicles: " + pending.size()
+                    + " réservation(s) non assignée(s) après tous les intervalles");
+        }
+    }
+
+    /**
+     * Regroupe des réservations par intervalles fixes (08:00 + WAITING_TIME_MINUTES)
+     * et retourne un Map ordonné chronologiquement.
+     */
+    public static Map<String, List<Reservation>> groupReservationsByInterval(List<Reservation> reservations) {
+        LinkedHashMap<String, List<Reservation>> result = new LinkedHashMap<>();
+        if (reservations == null || reservations.isEmpty()) {
+            return result;
+        }
+
+        TreeMap<LocalDateTime, List<Reservation>> grouped = groupByIntervalInternal(reservations);
+        for (Map.Entry<LocalDateTime, List<Reservation>> entry : grouped.entrySet()) {
+            LocalDateTime start = entry.getKey();
+            LocalDateTime end = start.plusMinutes(WAITING_TIME_MINUTES);
+            String key = String.format("%s | %s - %s",
+                    start.toLocalDate(),
+                    start.toLocalTime().format(TIME_FORMATTER),
+                    end.toLocalTime().format(TIME_FORMATTER));
+            result.put(key, entry.getValue());
+        }
+
+        return result;
+    }
+
+    private static TreeMap<LocalDateTime, List<Reservation>> groupByIntervalInternal(List<Reservation> reservations) {
+        TreeMap<LocalDateTime, List<Reservation>> grouped = new TreeMap<>();
+        for (Reservation r : reservations) {
+            LocalDateTime arrival = parseReservationDateTime(r.getDateHeureArrivee());
+            LocalDateTime intervalStart = computeIntervalStart(arrival);
+            grouped.computeIfAbsent(intervalStart, k -> new ArrayList<>()).add(r);
+        }
+
+        for (List<Reservation> group : grouped.values()) {
+            group.sort(Comparator.comparing(Reservation::getDateHeureArrivee));
+        }
+
+        return grouped;
+    }
+
+    private static LocalDateTime computeIntervalStart(LocalDateTime arrival) {
+        LocalDate date = arrival.toLocalDate();
+        LocalDateTime anchor = LocalDateTime.of(date, GROUPING_START_TIME);
+
+        // Si une réservation arrive avant 08:00, on la place dans le premier groupement
+        // de la journée.
+        if (arrival.isBefore(anchor)) {
+            return anchor;
+        }
+
+        long minutesSinceAnchor = java.time.Duration.between(anchor, arrival).toMinutes();
+        long bucketIndex = minutesSinceAnchor / WAITING_TIME_MINUTES;
+        return anchor.plusMinutes(bucketIndex * WAITING_TIME_MINUTES);
+    }
+
+    private static LocalDateTime parseReservationDateTime(String dateTime) {
+        if (dateTime == null) {
+            throw new IllegalArgumentException("dateTime de réservation null");
+        }
+        return Timestamp.valueOf(dateTime).toLocalDateTime();
+    }
+
+    private static LocalDateTime findLatestArrival(List<Reservation> reservations) {
+        LocalDateTime latest = null;
+        for (Reservation r : reservations) {
+            LocalDateTime arrival = parseReservationDateTime(r.getDateHeureArrivee());
+            if (latest == null || arrival.isAfter(latest)) {
+                latest = arrival;
+            }
+        }
+        return latest;
     }
 
     /**
@@ -525,6 +636,45 @@ public class AssignationModel {
             }
         }
         return list;
+    }
+
+    /**
+     * Compte le nombre total de trajets (assignations) réalisés par un véhicule.
+     */
+    public static int countTripsByVehicle(int idVehicule) throws SQLException {
+        String sql = "SELECT COUNT(*) AS total FROM assignation WHERE id_vehicule = ?";
+        try (Connection c = DB.getConnection();
+                PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setInt(1, idVehicule);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("total");
+                }
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Compte le nombre de trajets d'un véhicule pour une date donnée
+     * (date basée sur l'arrivée des réservations).
+     */
+    public static int countTripsByVehicleAndDate(int idVehicule, String date) throws SQLException {
+        String sql = "SELECT COUNT(*) AS total " +
+                "FROM assignation a " +
+                "JOIN reservation r ON r.id = a.id_reservation " +
+                "WHERE a.id_vehicule = ? AND DATE(r.date_heure_arrivee) = ?";
+        try (Connection c = DB.getConnection();
+                PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setInt(1, idVehicule);
+            ps.setDate(2, java.sql.Date.valueOf(date));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("total");
+                }
+            }
+        }
+        return 0;
     }
 
     /**
