@@ -3,6 +3,7 @@ model\ReservationModel.class
 model\LieuModel.class
 entity\Token.class
 entity\Assignation.class
+model\AssignationModel$AssignmentDraft.class
 model\AssignationModel.class
 model\TokenModel.class
 controller\PlanningController.class
