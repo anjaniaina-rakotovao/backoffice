@@ -38,10 +38,12 @@ public class AssignationModel {
     private static class ReservationWork {
         private final Reservation reservation;
         private int remainingPassengers;
+        private final boolean fromPending;
 
-        private ReservationWork(Reservation reservation, int remainingPassengers) {
+        private ReservationWork(Reservation reservation, int remainingPassengers, boolean fromPending) {
             this.reservation = reservation;
             this.remainingPassengers = remainingPassengers;
+            this.fromPending = fromPending;
         }
     }
 
@@ -222,6 +224,9 @@ public class AssignationModel {
     // }
 
     public static void autoAssignVehicles(String date) throws SQLException {
+        // Recalcul idempotent pour la date: on repart d'un état propre.
+        deleteAssignmentsForReservationDate(date);
+
         List<Reservation> reservations = ReservationModel.findByDateString(date);
         System.out.println("autoAssignVehicles: " + reservations.size()
                 + " réservations pour date=" + date + " (groupement=" + WAITING_TIME_MINUTES + " min)");
@@ -232,9 +237,6 @@ public class AssignationModel {
 
         // Récupère tous les véhicules une seule fois
         List<Vehicule> allVehicles = VehiculeModel.findAll();
-        // Charge initiale: places déjà occupées par des réservations déjà assignées ce
-        // jour.
-        Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
         Map<Integer, Integer> assignedByReservation = getAssignedPassengerCountByReservationForDate(date);
 
         TreeMap<LocalDateTime, List<Reservation>> groupedByInterval = groupByIntervalInternal(reservations);
@@ -244,21 +246,66 @@ public class AssignationModel {
             LocalDateTime intervalStart = intervalEntry.getKey();
             List<Reservation> currentIntervalReservations = intervalEntry.getValue();
 
-            List<ReservationWork> toProcess = new ArrayList<>(pending);
+            List<ReservationWork> toProcess = new ArrayList<>();
+            for (ReservationWork p : pending) {
+                toProcess.add(new ReservationWork(p.reservation, p.remainingPassengers, true));
+            }
             for (Reservation res : currentIntervalReservations) {
                 int alreadyAssigned = assignedByReservation.getOrDefault(res.getId(), 0);
                 int remaining = res.getNbrPassager() - alreadyAssigned;
                 if (remaining > 0) {
-                    toProcess.add(new ReservationWork(res, remaining));
+                    toProcess.add(new ReservationWork(res, remaining, false));
                 }
             }
-            toProcess.sort((a, b) -> Integer.compare(b.remainingPassengers, a.remainingPassengers));
+            toProcess.sort((a, b) -> {
+                int pendingCmp = Boolean.compare(b.fromPending, a.fromPending);
+                if (pendingCmp != 0) {
+                    return pendingCmp;
+                }
+                return Integer.compare(b.remainingPassengers, a.remainingPassengers);
+            });
 
-            LocalDateTime departureDateTime = findLatestArrival(currentIntervalReservations);
-            if (departureDateTime == null) {
-                departureDateTime = intervalStart;
+            // Règle métier: heure de base = début d'intervalle (pas l'arrivée réelle).
+            // Décalage court de départ pour groupe multi-réservations.
+            LocalDateTime departureDateTime = intervalStart;
+            if (currentIntervalReservations.size() > 1) {
+                try {
+                    Reservation firstOfGroup = currentIntervalReservations.get(0);
+                    Lieu airport = LieuModel.findAirport();
+                    if (airport != null && firstOfGroup != null) {
+                        long tripTimeMinutes = calculateTripTimeMinutes(
+                                airport.getId(),
+                                firstOfGroup.getIdHotelArrivee());
+                        // Décaler pour donner du temps pour le trajet aéroport → premier hôtel
+                        // Pas de limite haute: utiliser le temps réel du trajet
+                        departureDateTime = departureDateTime.plusMinutes(Math.max(0L, tripTimeMinutes));
+                    }
+                } catch (Exception e) {
+                    // fallback: garder departureDateTime sans décalage
+                }
             }
+
             String departureForInterval = departureDateTime.format(DATE_TIME_FORMATTER);
+
+            // Disponibilité réelle des véhicules à l'heure de départ de l'intervalle.
+            List<Vehicule> intervalVehicles = new ArrayList<>();
+            for (Vehicule v : allVehicles) {
+                String dateDisponibilite = v.getDateDisponibilite();
+                if (dateDisponibilite == null || dateDisponibilite.trim().isEmpty()) {
+                    intervalVehicles.add(v);
+                    continue;
+                }
+                LocalDateTime dispo = parseReservationDateTime(dateDisponibilite);
+                if (!dispo.isAfter(departureDateTime)) {
+                    intervalVehicles.add(v);
+                }
+            }
+
+            // Charge locale à l'intervalle: un véhicule repart avec sa capacité complète
+            // s'il est disponible à ce créneau.
+            Map<Integer, Integer> vehicleLoad = new HashMap<>();
+            // Hôtel principal traité par véhicule dans cet intervalle
+            Map<Integer, Integer> vehicleHotelByInterval = new HashMap<>();
 
             System.out.println("Intervalle " + intervalStart + " : " + toProcess.size()
                     + " réservations à traiter (" + pending.size() + " en priorité reportée)");
@@ -268,12 +315,29 @@ public class AssignationModel {
             // Boucle d'assignation : continuer tant qu'on peut assigner quelque chose
             // Retrier à chaque itération pour prioriser les petites réservations complètes
             boolean assignmentMade = true;
+            int passIndex = 0;
             while (assignmentMade) {
                 assignmentMade = false;
 
-                // Trier par taille croissante pour prioriser l'assignation des petites
-                // réservations EN ENTIER
-                toProcess.sort((a, b) -> Integer.compare(a.remainingPassengers, b.remainingPassengers));
+                // Passage 0: placer d'abord les gros groupes.
+                // Passages suivants: prioriser les petits restes pour finir le remplissage.
+                if (passIndex == 0) {
+                    toProcess.sort((a, b) -> {
+                        int pendingCmp = Boolean.compare(b.fromPending, a.fromPending);
+                        if (pendingCmp != 0) {
+                            return pendingCmp;
+                        }
+                        return Integer.compare(b.remainingPassengers, a.remainingPassengers);
+                    });
+                } else {
+                    toProcess.sort((a, b) -> {
+                        int pendingCmp = Boolean.compare(b.fromPending, a.fromPending);
+                        if (pendingCmp != 0) {
+                            return pendingCmp;
+                        }
+                        return Integer.compare(a.remainingPassengers, b.remainingPassengers);
+                    });
+                }
 
                 Iterator<ReservationWork> it = toProcess.iterator();
                 while (it.hasNext()) {
@@ -284,35 +348,46 @@ public class AssignationModel {
                         continue;
                     }
 
-                    // Stratégie 1 : Chercher un véhicule partiellement rempli EN PRIORITÉ
-                    // (pour compléter plutôt que fragmenter une grosse réservation)
-                    Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, 1, date);
+                    // Important: en passage 0 on privilégie le gros bloc complet.
+                    // En passages suivants, on finit les restes par petits morceaux.
+                    while (work.remainingPassengers > 0) {
+                        int neededForPartial = (passIndex == 0) ? work.remainingPassengers : 1;
+                        Vehicule selected = findPartiallyFilledVehiclePreferHotel(
+                                intervalVehicles,
+                                vehicleLoad,
+                                neededForPartial,
+                                date,
+                                work.reservation.getIdHotelArrivee(),
+                                vehicleHotelByInterval);
 
-                    // Stratégie 2 : Si pas de partiellement rempli, chercher le meilleur fit
-                    if (selected == null) {
-                        selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad,
-                                work.remainingPassengers, date);
-                    }
-
-                    // Stratégie 3 : Si aucun véhicule ne peut contenir la réservation entièrement,
-                    // chercher au moins 1 place pour fragmenter minimalement
-                    // Cela garantit que les petites réservations sont fragmentées EN PRIORITÉ
-                    if (selected == null) {
-                        selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, 1, date);
-                    }
-
-                    if (selected != null) {
-                        int capacityLeft = selected.getNbrPlace() - vehicleLoad.getOrDefault(selected.getId(), 0);
-                        if (capacityLeft > 0) {
-                            int chunk = Math.min(work.remainingPassengers, capacityLeft);
-                            assignVehicle(selected.getId(), work.reservation.getId(), departureForInterval, chunk);
-
-                            vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + chunk);
-                            assignedByReservation.put(work.reservation.getId(),
-                                    assignedByReservation.getOrDefault(work.reservation.getId(), 0) + chunk);
-                            work.remainingPassengers -= chunk;
-                            assignmentMade = true;
+                        if (selected == null) {
+                            selected = selectBestVehicleByRemainingSeats(intervalVehicles, vehicleLoad,
+                                    work.remainingPassengers, date);
                         }
+
+                        if (selected == null) {
+                            break;
+                        }
+
+                        int capacityLeft = selected.getNbrPlace() - vehicleLoad.getOrDefault(selected.getId(), 0);
+                        if (capacityLeft <= 0) {
+                            break;
+                        }
+
+                        int chunk = Math.min(work.remainingPassengers, capacityLeft);
+
+                        assignVehicle(selected.getId(), work.reservation.getId(), departureForInterval, chunk);
+
+                        vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + chunk);
+                        assignedByReservation.put(work.reservation.getId(),
+                                assignedByReservation.getOrDefault(work.reservation.getId(), 0) + chunk);
+                        work.remainingPassengers -= chunk;
+                        assignmentMade = true;
+
+                        LocalDateTime nextDisponibility = departureDateTime.plusMinutes(WAITING_TIME_MINUTES);
+                        selected.setDateDisponibilite(nextDisponibility.format(DATE_TIME_FORMATTER));
+
+                        vehicleHotelByInterval.putIfAbsent(selected.getId(), work.reservation.getIdHotelArrivee());
                     }
 
                     // Retirer si assignée entièrement
@@ -320,10 +395,14 @@ public class AssignationModel {
                         it.remove();
                     }
                 }
+
+                passIndex++;
             }
 
             // Ajouter les réservations toujours non assignées au pending
-            nextPending.addAll(toProcess);
+            for (ReservationWork w : toProcess) {
+                nextPending.add(new ReservationWork(w.reservation, w.remainingPassengers, true));
+            }
             pending = nextPending;
         }
 
@@ -406,6 +485,17 @@ public class AssignationModel {
         return latest;
     }
 
+    private static LocalDateTime findEarliestArrival(List<Reservation> reservations) {
+        LocalDateTime earliest = null;
+        for (Reservation r : reservations) {
+            LocalDateTime arrival = parseReservationDateTime(r.getDateHeureArrivee());
+            if (earliest == null || arrival.isBefore(earliest)) {
+                earliest = arrival;
+            }
+        }
+        return earliest;
+    }
+
     /**
      * Retourne la charge (total passagers assignés) par véhicule
      * pour les réservations arrivées à la date donnée.
@@ -479,6 +569,53 @@ public class AssignationModel {
         }
 
         return pickByTripCountThenTypeThenRandom(bestCandidates, date);
+    }
+
+    /**
+     * Variante de findPartiallyFilledVehicle avec préférence d'hôtel:
+     * - priorité aux véhicules déjà utilisés dans l'intervalle pour le même hôtel
+     * - fallback: tous véhicules partiellement remplis
+     */
+    private static Vehicule findPartiallyFilledVehiclePreferHotel(
+            List<Vehicule> allVehicles,
+            Map<Integer, Integer> vehicleLoad,
+            int nbrPassager,
+            String date,
+            int targetHotelId,
+            Map<Integer, Integer> vehicleHotelByInterval) throws SQLException {
+
+        List<Vehicule> preferred = new ArrayList<>();
+        int bestPreferredRemaining = Integer.MAX_VALUE;
+
+        for (Vehicule v : allVehicles) {
+            int currentLoad = vehicleLoad.getOrDefault(v.getId(), 0);
+            if (currentLoad == 0) {
+                continue;
+            }
+
+            Integer vehicleHotel = vehicleHotelByInterval.get(v.getId());
+            if (vehicleHotel == null || vehicleHotel != targetHotelId) {
+                continue;
+            }
+
+            int remaining = v.getNbrPlace() - currentLoad;
+            if (remaining >= nbrPassager) {
+                int remainingAfter = remaining - nbrPassager;
+                if (remainingAfter < bestPreferredRemaining) {
+                    bestPreferredRemaining = remainingAfter;
+                    preferred.clear();
+                    preferred.add(v);
+                } else if (remainingAfter == bestPreferredRemaining) {
+                    preferred.add(v);
+                }
+            }
+        }
+
+        if (!preferred.isEmpty()) {
+            return pickByTripCountThenTypeThenRandom(preferred, date);
+        }
+
+        return findPartiallyFilledVehicle(allVehicles, vehicleLoad, nbrPassager, date);
     }
 
     /**
@@ -580,11 +717,12 @@ public class AssignationModel {
             }
         }
 
-        Random rnd = new Random();
         if (!dieselCandidates.isEmpty()) {
-            return dieselCandidates.get(rnd.nextInt(dieselCandidates.size()));
+            dieselCandidates.sort(Comparator.comparingInt(Vehicule::getId));
+            return dieselCandidates.get(0);
         }
-        return leastTripCandidates.get(rnd.nextInt(leastTripCandidates.size()));
+        leastTripCandidates.sort(Comparator.comparingInt(Vehicule::getId));
+        return leastTripCandidates.get(0);
     }
 
     /**
@@ -881,6 +1019,16 @@ public class AssignationModel {
         }
     }
 
+    public static void deleteAssignmentsForReservationDate(String date) throws SQLException {
+        String sql = "DELETE FROM assignation a USING reservation r " +
+                "WHERE a.id_reservation = r.id AND DATE(r.date_heure_arrivee) = ?";
+        try (Connection c = DB.getConnection();
+                PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setDate(1, java.sql.Date.valueOf(date));
+            ps.executeUpdate();
+        }
+    }
+
     /**
      * Met à jour la date de départ d'une assignation
      */
@@ -1025,6 +1173,25 @@ public class AssignationModel {
         }
 
         return Math.max(0L, Math.round((totalDistanceKm / AVERAGE_SPEED_KMH) * 60.0));
+    }
+
+    /**
+     * Calcule le temps de trajet en minutes entre deux lieux spécifiques
+     * basé sur la distance et une vitesse moyenne fixe.
+     */
+    public static long calculateTripTimeMinutes(int fromLocationId, int toLocationId) throws SQLException {
+        double distance = LieuModel.getDistance(fromLocationId, toLocationId);
+
+        // Fallback si la route inverse est la seule renseignée en base
+        if (distance == Double.MAX_VALUE) {
+            distance = LieuModel.getDistance(toLocationId, fromLocationId);
+        }
+
+        if (distance != Double.MAX_VALUE && distance > 0) {
+            return Math.max(0L, Math.round((distance / AVERAGE_SPEED_KMH) * 60.0));
+        }
+
+        return 0L;
     }
 
     /**

@@ -217,7 +217,7 @@
             color: #ffffff;
             text-align: center;
             padding: 8px 12px;
-            font-size: 14px;
+            font-size: 35px;
             font-weight: bold;
             letter-spacing: 0.4px;
         }
@@ -274,7 +274,10 @@
                              margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px solid #007bff; }
         .reservation-item { background: #e7f3ff; border-left: 4px solid #28a745; 
                            padding: 8px 10px; margin-bottom: 8px; font-size: 12px; border-radius: 4px; }
+        .trip-separator { margin: 10px 0 6px 0; padding: 6px 8px; background: #dbeafe; border-left: 4px solid #2563eb; border-radius: 4px; font-size: 12px; font-weight: bold; color: #1e3a8a; }
         .reservation-item p { margin: 2px 0; }
+        .return-time { color: #dc3545; font-weight: bold; }
+        .trip-duration { color: #ff9800; font-weight: bold; }
         .no-reservation { font-style: italic; color: #999; padding: 10px 0; }
         
         .empty-msg { text-align: center; padding: 20px; color: #999; font-style: italic; }
@@ -295,7 +298,7 @@
 </head>
 <body>
     <div class="top-fixed">
-        <div class="etu-banner">ETU3130 | ETU3158 | ETU3160</div>
+        <div class="etu-banner">ETU3130 - ETU3158 - ETU3160</div>
         <!-- Navigation bar -->
         <nav class="navbar">
             <div class="navbar-content">
@@ -350,6 +353,10 @@
                     @SuppressWarnings("unchecked")
                     List<Lieu> route = (List<Lieu>) vData.get("route");
                     String airportArrivalTime = (String) vData.get("airportArrivalTime");
+                    @SuppressWarnings("unchecked")
+                    List<String> returnTimes = (List<String>) vData.get("returnTimes");
+                    @SuppressWarnings("unchecked")
+                    List<String> tripDurations = (List<String>) vData.get("tripDurations");
                 %>
                 <div class="vehicle-card">
                     <div class="vehicle-header">
@@ -399,15 +406,26 @@
 
                         <div class="reservations-title">👥 Réservations liées</div>
                         <% if(reservations != null && !reservations.isEmpty()){ %>
+                            <% String lastDeparture = null; %>
                             <% for(int i = 0; i < reservations.size(); i++){
                                 Reservation r = reservations.get(i);
                                 Assignation a = (assignations != null && i < assignations.size()) ? assignations.get(i) : null;
+                                String returnTime = (returnTimes != null && i < returnTimes.size()) ? returnTimes.get(i) : "--:--";
+                                String tripDuration = (tripDurations != null && i < tripDurations.size()) ? tripDurations.get(i) : "--:--";
+                                String departureTime = (a != null && a.getDateDepart() != null) ? a.getDateDepart() : "--:--";
                             %>
+                                <% if(lastDeparture == null || !lastDeparture.equals(departureTime)){ %>
+                                    <div class="trip-separator">Trajet départ: <%= departureTime %> | Retour: <%= returnTime %></div>
+                                    <% lastDeparture = departureTime; %>
+                                <% } %>
                                 <div class="reservation-item">
                                     <p>👤 Client: <strong><%= r.getIdClient() %></strong></p>
                                     <p>🚶 Passagers assignés: <strong><%= a != null ? a.getNbrPassagerAssigne() : r.getNbrPassager() %></strong>
                                        / Réservation: <strong><%= r.getNbrPassager() %></strong></p>
-                                    <p>⏰ Arrivée: <%= r.getDateHeureArrivee() %></p>
+                                    <p>⏰ Arrivée client: <%= r.getDateHeureArrivee() %></p>
+                                    <p>🚐 Départ trajet: <%= departureTime %></p>
+                                    <p>⚙️ Durée trajet: <span class="trip-duration"><%= tripDuration %></span></p>
+                                    <p>🔁 Retour: <span class="return-time"><%= returnTime %></span></p>
                                 </div>
                             <% } %>
                         <% } else { %>

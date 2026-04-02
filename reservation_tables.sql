@@ -40,9 +40,12 @@ insert into
     lieu (libelle, code)
 values
     ('aeroport', 'AE'),
-    ('hotel1', 'h1');
+    ('hotel1', 'h1'),
+    ('hotel2', 'h2');
 
 insert into
     distance (id_from, id_to, distance_km)
 values
-    (2, 1, 50);
+    (1, 2, 90),
+    (1, 3, 35),
+    (2, 3, 60);
