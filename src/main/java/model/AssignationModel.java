@@ -30,7 +30,7 @@ import util.DB;
 public class AssignationModel {
 
     private static final double AVERAGE_SPEED_KMH = 50.0;
-    private static final int WAITING_TIME_MINUTES = 30;
+    private static final int DEFAULT_WAITING_TIME_MINUTES = 30;
     private static final LocalTime GROUPING_START_TIME = LocalTime.of(8, 0);
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
@@ -44,6 +44,38 @@ public class AssignationModel {
             this.reservation = reservation;
             this.remainingPassengers = remainingPassengers;
             this.fromPending = fromPending;
+        }
+    }
+
+    private static class AssignmentDraft {
+        private final int vehicleId;
+        private final int reservationId;
+        private final int passengers;
+
+        private AssignmentDraft(int vehicleId, int reservationId, int passengers) {
+            this.vehicleId = vehicleId;
+            this.reservationId = reservationId;
+            this.passengers = passengers;
+        }
+    }
+
+    private static int getWaitingTimeMinutes() {
+        int value = DEFAULT_WAITING_TIME_MINUTES;
+
+        String fromProperty = System.getProperty("assignation.waiting.minutes");
+        if (fromProperty == null || fromProperty.trim().isEmpty()) {
+            fromProperty = System.getenv("WAITING_TIME_MINUTES");
+        }
+
+        if (fromProperty == null || fromProperty.trim().isEmpty()) {
+            return value;
+        }
+
+        try {
+            int parsed = Integer.parseInt(fromProperty.trim());
+            return parsed > 0 ? parsed : value;
+        } catch (NumberFormatException e) {
+            return value;
         }
     }
 
@@ -228,8 +260,10 @@ public class AssignationModel {
         deleteAssignmentsForReservationDate(date);
 
         List<Reservation> reservations = ReservationModel.findByDateString(date);
+        reservations.sort(Comparator.comparing(Reservation::getDateHeureArrivee));
+        int waitingMinutes = getWaitingTimeMinutes();
         System.out.println("autoAssignVehicles: " + reservations.size()
-                + " réservations pour date=" + date + " (groupement=" + WAITING_TIME_MINUTES + " min)");
+                + " réservations pour date=" + date + " (groupement=" + waitingMinutes + " min)");
 
         if (reservations.isEmpty()) {
             return;
@@ -238,89 +272,104 @@ public class AssignationModel {
         // Récupère tous les véhicules une seule fois
         List<Vehicule> allVehicles = VehiculeModel.findAll();
         Map<Integer, Integer> assignedByReservation = getAssignedPassengerCountByReservationForDate(date);
-
-        TreeMap<LocalDateTime, List<Reservation>> groupedByInterval = groupByIntervalInternal(reservations);
         List<ReservationWork> pending = new ArrayList<>();
+        int nextReservationIndex = 0;
+        LocalDateTime currentTime = computeIntervalStart(
+                parseReservationDateTime(reservations.get(0).getDateHeureArrivee()));
 
-        for (Map.Entry<LocalDateTime, List<Reservation>> intervalEntry : groupedByInterval.entrySet()) {
-            LocalDateTime intervalStart = intervalEntry.getKey();
-            List<Reservation> currentIntervalReservations = intervalEntry.getValue();
+        while (nextReservationIndex < reservations.size() || !pending.isEmpty()) {
+            // Injecte les réservations arrivées jusqu'à l'instant courant.
+            while (nextReservationIndex < reservations.size()) {
+                Reservation nextRes = reservations.get(nextReservationIndex);
+                LocalDateTime arrival = parseReservationDateTime(nextRes.getDateHeureArrivee());
+                if (arrival.isAfter(currentTime)) {
+                    break;
+                }
+                int alreadyAssigned = assignedByReservation.getOrDefault(nextRes.getId(), 0);
+                int remaining = nextRes.getNbrPassager() - alreadyAssigned;
+                if (remaining > 0) {
+                    pending.add(new ReservationWork(nextRes, remaining, false));
+                }
+                nextReservationIndex++;
+            }
+
+            List<Vehicule> availableNow = getAvailableVehiclesAt(allVehicles, currentTime);
+
+            if (pending.isEmpty() || availableNow.isEmpty()) {
+                LocalDateTime nextArrivalTime = (nextReservationIndex < reservations.size())
+                        ? computeIntervalStart(
+                                parseReservationDateTime(reservations.get(nextReservationIndex).getDateHeureArrivee()))
+                        : null;
+                LocalDateTime nextVehicleReturn = getEarliestVehicleAvailabilityAfter(allVehicles, currentTime);
+                LocalDateTime nextEvent = minTime(nextArrivalTime, nextVehicleReturn);
+                if (nextEvent == null) {
+                    break;
+                }
+                currentTime = nextEvent;
+                continue;
+            }
+
+            boolean hasPendingBeforeWindow = pending.stream().anyMatch(w -> w.fromPending || w.remainingPassengers > 0);
+            boolean exactArrivalAtCurrentTime = false;
+            int snapshotIndex = nextReservationIndex;
+            while (snapshotIndex < reservations.size()) {
+                LocalDateTime arrival = parseReservationDateTime(reservations.get(snapshotIndex).getDateHeureArrivee());
+                if (!arrival.equals(currentTime)) {
+                    if (arrival.isAfter(currentTime)) {
+                        break;
+                    }
+                    snapshotIndex++;
+                    continue;
+                }
+                exactArrivalAtCurrentTime = true;
+                break;
+            }
+
+            LocalDateTime windowEnd = currentTime.plusMinutes(waitingMinutes);
+            if (hasPendingBeforeWindow && exactArrivalAtCurrentTime) {
+                // Cas mixte non assignés + vol à l'instant exact du retour voiture: départ
+                // immédiat.
+                windowEnd = currentTime;
+            }
+
+            while (nextReservationIndex < reservations.size()) {
+                Reservation nextRes = reservations.get(nextReservationIndex);
+                LocalDateTime arrival = parseReservationDateTime(nextRes.getDateHeureArrivee());
+                if (arrival.isAfter(windowEnd)) {
+                    break;
+                }
+
+                int alreadyAssigned = assignedByReservation.getOrDefault(nextRes.getId(), 0);
+                int remaining = nextRes.getNbrPassager() - alreadyAssigned;
+                if (remaining > 0) {
+                    pending.add(new ReservationWork(nextRes, remaining, false));
+                }
+                nextReservationIndex++;
+            }
 
             List<ReservationWork> toProcess = new ArrayList<>();
             for (ReservationWork p : pending) {
-                toProcess.add(new ReservationWork(p.reservation, p.remainingPassengers, true));
-            }
-            for (Reservation res : currentIntervalReservations) {
-                int alreadyAssigned = assignedByReservation.getOrDefault(res.getId(), 0);
-                int remaining = res.getNbrPassager() - alreadyAssigned;
-                if (remaining > 0) {
-                    toProcess.add(new ReservationWork(res, remaining, false));
-                }
-            }
-            toProcess.sort((a, b) -> {
-                int pendingCmp = Boolean.compare(b.fromPending, a.fromPending);
-                if (pendingCmp != 0) {
-                    return pendingCmp;
-                }
-                return Integer.compare(b.remainingPassengers, a.remainingPassengers);
-            });
-
-            // Règle métier: heure de base = début d'intervalle (pas l'arrivée réelle).
-            // Décalage court de départ pour groupe multi-réservations.
-            LocalDateTime departureDateTime = intervalStart;
-            if (currentIntervalReservations.size() > 1) {
-                try {
-                    Reservation firstOfGroup = currentIntervalReservations.get(0);
-                    Lieu airport = LieuModel.findAirport();
-                    if (airport != null && firstOfGroup != null) {
-                        long tripTimeMinutes = calculateTripTimeMinutes(
-                                airport.getId(),
-                                firstOfGroup.getIdHotelArrivee());
-                        // Décaler pour donner du temps pour le trajet aéroport → premier hôtel
-                        // Pas de limite haute: utiliser le temps réel du trajet
-                        departureDateTime = departureDateTime.plusMinutes(Math.max(0L, tripTimeMinutes));
-                    }
-                } catch (Exception e) {
-                    // fallback: garder departureDateTime sans décalage
+                if (p.remainingPassengers > 0) {
+                    toProcess.add(new ReservationWork(p.reservation, p.remainingPassengers, true));
                 }
             }
 
-            String departureForInterval = departureDateTime.format(DATE_TIME_FORMATTER);
-
-            // Disponibilité réelle des véhicules à l'heure de départ de l'intervalle.
-            List<Vehicule> intervalVehicles = new ArrayList<>();
-            for (Vehicule v : allVehicles) {
-                String dateDisponibilite = v.getDateDisponibilite();
-                if (dateDisponibilite == null || dateDisponibilite.trim().isEmpty()) {
-                    intervalVehicles.add(v);
-                    continue;
-                }
-                LocalDateTime dispo = parseReservationDateTime(dateDisponibilite);
-                if (!dispo.isAfter(departureDateTime)) {
-                    intervalVehicles.add(v);
-                }
+            if (toProcess.isEmpty()) {
+                currentTime = windowEnd;
+                continue;
             }
 
-            // Charge locale à l'intervalle: un véhicule repart avec sa capacité complète
-            // s'il est disponible à ce créneau.
+            // Départ = dernière opportunité d'assignation observée dans la fenêtre.
+            LocalDateTime departureDateTime = currentTime;
             Map<Integer, Integer> vehicleLoad = new HashMap<>();
-            // Hôtel principal traité par véhicule dans cet intervalle
             Map<Integer, Integer> vehicleHotelByInterval = new HashMap<>();
+            List<AssignmentDraft> drafts = new ArrayList<>();
 
-            System.out.println("Intervalle " + intervalStart + " : " + toProcess.size()
-                    + " réservations à traiter (" + pending.size() + " en priorité reportée)");
-
-            List<ReservationWork> nextPending = new ArrayList<>();
-
-            // Boucle d'assignation : continuer tant qu'on peut assigner quelque chose
-            // Retrier à chaque itération pour prioriser les petites réservations complètes
             boolean assignmentMade = true;
             int passIndex = 0;
             while (assignmentMade) {
                 assignmentMade = false;
 
-                // Passage 0: placer d'abord les gros groupes.
-                // Passages suivants: prioriser les petits restes pour finir le remplissage.
                 if (passIndex == 0) {
                     toProcess.sort((a, b) -> {
                         int pendingCmp = Boolean.compare(b.fromPending, a.fromPending);
@@ -348,12 +397,10 @@ public class AssignationModel {
                         continue;
                     }
 
-                    // Important: en passage 0 on privilégie le gros bloc complet.
-                    // En passages suivants, on finit les restes par petits morceaux.
                     while (work.remainingPassengers > 0) {
                         int neededForPartial = (passIndex == 0) ? work.remainingPassengers : 1;
                         Vehicule selected = findPartiallyFilledVehiclePreferHotel(
-                                intervalVehicles,
+                                availableNow,
                                 vehicleLoad,
                                 neededForPartial,
                                 date,
@@ -361,7 +408,7 @@ public class AssignationModel {
                                 vehicleHotelByInterval);
 
                         if (selected == null) {
-                            selected = selectBestVehicleByRemainingSeats(intervalVehicles, vehicleLoad,
+                            selected = selectBestVehicleByRemainingSeats(availableNow, vehicleLoad,
                                     work.remainingPassengers, date);
                         }
 
@@ -375,8 +422,7 @@ public class AssignationModel {
                         }
 
                         int chunk = Math.min(work.remainingPassengers, capacityLeft);
-
-                        assignVehicle(selected.getId(), work.reservation.getId(), departureForInterval, chunk);
+                        drafts.add(new AssignmentDraft(selected.getId(), work.reservation.getId(), chunk));
 
                         vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + chunk);
                         assignedByReservation.put(work.reservation.getId(),
@@ -384,13 +430,20 @@ public class AssignationModel {
                         work.remainingPassengers -= chunk;
                         assignmentMade = true;
 
-                        LocalDateTime nextDisponibility = departureDateTime.plusMinutes(WAITING_TIME_MINUTES);
-                        selected.setDateDisponibilite(nextDisponibility.format(DATE_TIME_FORMATTER));
+                        LocalDateTime reservationArrival = parseReservationDateTime(
+                                work.reservation.getDateHeureArrivee());
+                        if (reservationArrival.isAfter(departureDateTime) && !reservationArrival.isAfter(windowEnd)) {
+                            departureDateTime = reservationArrival;
+                        }
 
                         vehicleHotelByInterval.putIfAbsent(selected.getId(), work.reservation.getIdHotelArrivee());
+
+                        // Véhicule plein => départ immédiat de ce véhicule dans ce run de fenêtre.
+                        if (vehicleLoad.getOrDefault(selected.getId(), 0) >= selected.getNbrPlace()) {
+                            break;
+                        }
                     }
 
-                    // Retirer si assignée entièrement
                     if (work.remainingPassengers == 0) {
                         it.remove();
                     }
@@ -399,17 +452,94 @@ public class AssignationModel {
                 passIndex++;
             }
 
-            // Ajouter les réservations toujours non assignées au pending
-            for (ReservationWork w : toProcess) {
-                nextPending.add(new ReservationWork(w.reservation, w.remainingPassengers, true));
+            if (drafts.isEmpty()) {
+                LocalDateTime nextVehicleReturn = getEarliestVehicleAvailabilityAfter(allVehicles, currentTime);
+                LocalDateTime nextArrivalTime = (nextReservationIndex < reservations.size())
+                        ? computeIntervalStart(
+                                parseReservationDateTime(reservations.get(nextReservationIndex).getDateHeureArrivee()))
+                        : null;
+                LocalDateTime nextEvent = minTime(nextArrivalTime, nextVehicleReturn);
+                if (nextEvent == null) {
+                    break;
+                }
+                pending.clear();
+                for (ReservationWork w : toProcess) {
+                    if (w.remainingPassengers > 0) {
+                        pending.add(new ReservationWork(w.reservation, w.remainingPassengers, true));
+                    }
+                }
+                currentTime = nextEvent;
+                continue;
             }
-            pending = nextPending;
+
+            String departureForWindow = departureDateTime.format(DATE_TIME_FORMATTER);
+            for (AssignmentDraft d : drafts) {
+                assignVehicle(d.vehicleId, d.reservationId, departureForWindow, d.passengers);
+            }
+
+            LocalDateTime nextAvailability = departureDateTime.plusMinutes(waitingMinutes);
+            for (Vehicule vehicle : availableNow) {
+                Integer consumed = vehicleLoad.get(vehicle.getId());
+                if (consumed != null && consumed > 0) {
+                    vehicle.setDateDisponibilite(nextAvailability.format(DATE_TIME_FORMATTER));
+                }
+            }
+
+            pending.clear();
+            for (ReservationWork w : toProcess) {
+                if (w.remainingPassengers > 0) {
+                    pending.add(new ReservationWork(w.reservation, w.remainingPassengers, true));
+                }
+            }
+
+            currentTime = departureDateTime;
         }
 
         if (!pending.isEmpty()) {
             System.out.println("autoAssignVehicles: " + pending.size()
-                    + " réservation(s) non assignée(s) après tous les intervalles");
+                    + " réservation(s) non assignée(s) après tous les regroupements");
         }
+    }
+
+    private static List<Vehicule> getAvailableVehiclesAt(List<Vehicule> allVehicles, LocalDateTime time) {
+        List<Vehicule> available = new ArrayList<>();
+        for (Vehicule v : allVehicles) {
+            String dateDisponibilite = v.getDateDisponibilite();
+            if (dateDisponibilite == null || dateDisponibilite.trim().isEmpty()) {
+                available.add(v);
+                continue;
+            }
+            LocalDateTime dispo = parseReservationDateTime(dateDisponibilite);
+            if (!dispo.isAfter(time)) {
+                available.add(v);
+            }
+        }
+        return available;
+    }
+
+    private static LocalDateTime getEarliestVehicleAvailabilityAfter(List<Vehicule> allVehicles, LocalDateTime time) {
+        LocalDateTime min = null;
+        for (Vehicule v : allVehicles) {
+            String dateDisponibilite = v.getDateDisponibilite();
+            if (dateDisponibilite == null || dateDisponibilite.trim().isEmpty()) {
+                continue;
+            }
+            LocalDateTime dispo = parseReservationDateTime(dateDisponibilite);
+            if (dispo.isAfter(time) && (min == null || dispo.isBefore(min))) {
+                min = dispo;
+            }
+        }
+        return min;
+    }
+
+    private static LocalDateTime minTime(LocalDateTime a, LocalDateTime b) {
+        if (a == null) {
+            return b;
+        }
+        if (b == null) {
+            return a;
+        }
+        return a.isBefore(b) ? a : b;
     }
 
     /**
@@ -426,7 +556,7 @@ public class AssignationModel {
         TreeMap<LocalDateTime, List<Reservation>> grouped = groupByIntervalInternal(reservations);
         for (Map.Entry<LocalDateTime, List<Reservation>> entry : grouped.entrySet()) {
             LocalDateTime start = entry.getKey();
-            LocalDateTime end = start.plusMinutes(WAITING_TIME_MINUTES);
+            LocalDateTime end = start.plusMinutes(getWaitingTimeMinutes());
             String key = String.format("%s | %s - %s",
                     start.toLocalDate(),
                     start.toLocalTime().format(TIME_FORMATTER),
@@ -463,8 +593,9 @@ public class AssignationModel {
         }
 
         long minutesSinceAnchor = java.time.Duration.between(anchor, arrival).toMinutes();
-        long bucketIndex = minutesSinceAnchor / WAITING_TIME_MINUTES;
-        return anchor.plusMinutes(bucketIndex * WAITING_TIME_MINUTES);
+        int waitingMinutes = getWaitingTimeMinutes();
+        long bucketIndex = minutesSinceAnchor / waitingMinutes;
+        return anchor.plusMinutes(bucketIndex * waitingMinutes);
     }
 
     private static LocalDateTime parseReservationDateTime(String dateTime) {
@@ -718,11 +849,9 @@ public class AssignationModel {
         }
 
         if (!dieselCandidates.isEmpty()) {
-            dieselCandidates.sort(Comparator.comparingInt(Vehicule::getId));
-            return dieselCandidates.get(0);
+            return dieselCandidates.get(new Random().nextInt(dieselCandidates.size()));
         }
-        leastTripCandidates.sort(Comparator.comparingInt(Vehicule::getId));
-        return leastTripCandidates.get(0);
+        return leastTripCandidates.get(new Random().nextInt(leastTripCandidates.size()));
     }
 
     /**
@@ -1240,6 +1369,6 @@ public class AssignationModel {
      */
     public static void updateVehicleAvailability(int idVehicule, String dateDepart)
             throws SQLException {
-        updateVehicleAvailability(idVehicule, dateDepart, WAITING_TIME_MINUTES);
+        updateVehicleAvailability(idVehicule, dateDepart, getWaitingTimeMinutes());
     }
 }
