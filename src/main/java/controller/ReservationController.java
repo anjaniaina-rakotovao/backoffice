@@ -2,7 +2,9 @@ package controller;
 
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import annotation.AnnotationController;
@@ -105,8 +107,10 @@ public class ReservationController {
         try {
             List<Reservation> reservations = ReservationModel.findAll();
             Set<Integer> assignedIds = AssignationModel.findAllAssignedReservationIds();
+            Map<String, List<Reservation>> reservationGroups = AssignationModel.groupReservationsByInterval(reservations);
             request.setAttribute("reservations", reservations);
             request.setAttribute("assignedIds", assignedIds);
+            request.setAttribute("reservationGroups", reservationGroups != null ? reservationGroups : new LinkedHashMap<>());
             return new ModelVue("listReservations");
         } catch (Exception e) {
             e.printStackTrace();
