@@ -144,8 +144,9 @@ public class AssignationModel {
      * Assigne automatiquement les véhicules aux réservations d'une date donnée
      * Applique les règles de sélection:
      * 1. Minimal places restants
-     * 2. Si égal, prendre diesel
-     * 3. Si tous diesel, prendre random
+     * 2. Si égal, prendre le véhicule avec le moins de trajets sur la date
+     * 3. Si égal, prendre diesel
+     * 4. Si toujours égal, prendre random
      * Ne réassigne que les réservations qui n'ont pas encore d'assignation
      */
     // public static void autoAssignVehicles(String date) throws SQLException {
@@ -230,11 +231,11 @@ public class AssignationModel {
                 }
 
                 // Règle prioritaire: remplir d'abord les véhicules déjà entamés.
-                Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, res.getNbrPassager());
+                Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, res.getNbrPassager(), date);
                 if (selected == null) {
                     // Aucun véhicule partiellement rempli ne convient: on ouvre alors la sélection
                     // globale.
-                    selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
+                    selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager(), date);
                 }
 
                 if (selected == null) {
@@ -257,7 +258,8 @@ public class AssignationModel {
     }
 
     /**
-     * Regroupe des réservations par intervalles fixes (08:00 + WAITING_TIME_MINUTES)
+     * Regroupe des réservations par intervalles fixes (08:00 +
+     * WAITING_TIME_MINUTES)
      * et retourne un Map ordonné chronologiquement.
      */
     public static Map<String, List<Reservation>> groupReservationsByInterval(List<Reservation> reservations) {
@@ -358,7 +360,7 @@ public class AssignationModel {
      * convient.
      */
     private static Vehicule findPartiallyFilledVehicle(List<Vehicule> allVehicles,
-            Map<Integer, Integer> vehicleLoad, int nbrPassager) {
+            Map<Integer, Integer> vehicleLoad, int nbrPassager, String date) throws SQLException {
         List<Vehicule> bestCandidates = new ArrayList<>();
         int bestRemaining = Integer.MAX_VALUE;
 
@@ -380,7 +382,7 @@ public class AssignationModel {
             }
         }
 
-        return pickByTypeThenRandom(bestCandidates);
+        return pickByTripCountThenTypeThenRandom(bestCandidates, date);
     }
 
     /**
@@ -390,7 +392,7 @@ public class AssignationModel {
      * - tie-break: diesel, puis aléatoire
      */
     private static Vehicule selectBestVehicleByRemainingSeats(List<Vehicule> allVehicles,
-            Map<Integer, Integer> vehicleLoad, int nbrPassager) {
+            Map<Integer, Integer> vehicleLoad, int nbrPassager, String date) throws SQLException {
         List<Vehicule> candidates = new ArrayList<>();
         int bestRemainingAfter = Integer.MAX_VALUE;
 
@@ -414,13 +416,15 @@ public class AssignationModel {
         if (candidates.isEmpty()) {
             return null;
         }
-        return pickByTypeThenRandom(candidates);
+        return pickByTripCountThenTypeThenRandom(candidates, date);
     }
 
     /**
-     * Départage final: préférence diesel, puis tirage aléatoire.
+     * Départage final: moins de trajets sur la date, puis préférence diesel,
+     * puis tirage aléatoire.
      */
-    private static Vehicule pickByTypeThenRandom(List<Vehicule> candidates) {
+    private static Vehicule pickByTripCountThenTypeThenRandom(List<Vehicule> candidates, String date)
+            throws SQLException {
         if (candidates == null || candidates.isEmpty()) {
             return null;
         }
@@ -428,8 +432,25 @@ public class AssignationModel {
             return candidates.get(0);
         }
 
-        List<Vehicule> dieselCandidates = new ArrayList<>();
+        int minTrips = Integer.MAX_VALUE;
+        List<Vehicule> leastTripCandidates = new ArrayList<>();
         for (Vehicule v : candidates) {
+            int tripCount = countTripsByVehicleAndDate(v.getId(), date);
+            if (tripCount < minTrips) {
+                minTrips = tripCount;
+                leastTripCandidates.clear();
+                leastTripCandidates.add(v);
+            } else if (tripCount == minTrips) {
+                leastTripCandidates.add(v);
+            }
+        }
+
+        if (leastTripCandidates.size() == 1) {
+            return leastTripCandidates.get(0);
+        }
+
+        List<Vehicule> dieselCandidates = new ArrayList<>();
+        for (Vehicule v : leastTripCandidates) {
             String t = v.getType();
             if (t != null) {
                 t = t.trim();
@@ -443,7 +464,7 @@ public class AssignationModel {
         if (!dieselCandidates.isEmpty()) {
             return dieselCandidates.get(rnd.nextInt(dieselCandidates.size()));
         }
-        return candidates.get(rnd.nextInt(candidates.size()));
+        return leastTripCandidates.get(rnd.nextInt(leastTripCandidates.size()));
     }
 
     /**
@@ -512,7 +533,7 @@ public class AssignationModel {
         String date = res.getDateHeureArrivee().substring(0, 10);
         List<Vehicule> allVehicles = VehiculeModel.findAll();
         Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
-        Vehicule selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
+        Vehicule selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager(), date);
 
         System.out.println("autoAssignForReservation: selected=" + (selected != null ? selected.getId() : "null"));
         if (selected != null) {
@@ -572,7 +593,7 @@ public class AssignationModel {
         String date = res.getDateHeureArrivee().substring(0, 10);
         List<Vehicule> allVehicles = VehiculeModel.findAll();
         Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
-        Vehicule selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager());
+        Vehicule selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager(), date);
 
         if (selected != null) {
             // 🚨 Correction : passer la date de réservation comme date_depart
