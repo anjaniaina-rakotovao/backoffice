@@ -4,6 +4,7 @@ public class Assignation {
     private int id;
     private int idVehicule;
     private int idReservation;
+    private int nbrPassagerAssigne;
     private String dateAssignation;
     private String dateDepart;
 
@@ -14,11 +15,20 @@ public class Assignation {
     public Assignation(int idVehicule, int idReservation) {
         this.idVehicule = idVehicule;
         this.idReservation = idReservation;
+        this.nbrPassagerAssigne = 0;
     }
 
     public Assignation(int idVehicule, int idReservation, String dateDepart) {
         this.idVehicule = idVehicule;
         this.idReservation = idReservation;
+        this.nbrPassagerAssigne = 0;
+        this.dateDepart = dateDepart;
+    }
+
+    public Assignation(int idVehicule, int idReservation, int nbrPassagerAssigne, String dateDepart) {
+        this.idVehicule = idVehicule;
+        this.idReservation = idReservation;
+        this.nbrPassagerAssigne = nbrPassagerAssigne;
         this.dateDepart = dateDepart;
     }
 
@@ -26,6 +36,17 @@ public class Assignation {
         this.id = id;
         this.idVehicule = idVehicule;
         this.idReservation = idReservation;
+        this.nbrPassagerAssigne = 0;
+        this.dateAssignation = dateAssignation;
+        this.dateDepart = dateDepart;
+    }
+
+    public Assignation(int id, int idVehicule, int idReservation, int nbrPassagerAssigne, String dateAssignation,
+            String dateDepart) {
+        this.id = id;
+        this.idVehicule = idVehicule;
+        this.idReservation = idReservation;
+        this.nbrPassagerAssigne = nbrPassagerAssigne;
         this.dateAssignation = dateAssignation;
         this.dateDepart = dateDepart;
     }
@@ -55,6 +76,14 @@ public class Assignation {
         this.idReservation = idReservation;
     }
 
+    public int getNbrPassagerAssigne() {
+        return nbrPassagerAssigne;
+    }
+
+    public void setNbrPassagerAssigne(int nbrPassagerAssigne) {
+        this.nbrPassagerAssigne = nbrPassagerAssigne;
+    }
+
     public String getDateAssignation() {
         return dateAssignation;
     }
@@ -77,6 +106,7 @@ public class Assignation {
                 "id=" + id +
                 ", idVehicule=" + idVehicule +
                 ", idReservation=" + idReservation +
+                ", nbrPassagerAssigne=" + nbrPassagerAssigne +
                 ", dateAssignation='" + dateAssignation + '\'' +
                 ", dateDepart='" + dateDepart + '\'' +
                 '}';

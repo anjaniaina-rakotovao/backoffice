@@ -10,6 +10,7 @@ util\DB.class
 util\JsonError.class
 entity\Reservation.class
 util\TokenValidator.class
+model\AssignationModel$ReservationWork.class
 model\VehiculeModel.class
 controller\VehiculeController.class
 entity\Vehicule.class

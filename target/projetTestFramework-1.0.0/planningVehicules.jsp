@@ -202,7 +202,25 @@
     <title>Planification des Véhicules</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, sans-serif; background-color: #f5f5f5; }
+        body { font-family: Arial, sans-serif; background-color: #f5f5f5; padding-top: 118px; }
+
+        .top-fixed {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            z-index: 1000;
+        }
+
+        .etu-banner {
+            background-color: #0b2e59;
+            color: #ffffff;
+            text-align: center;
+            padding: 8px 12px;
+            font-size: 35px;
+            font-weight: bold;
+            letter-spacing: 0.4px;
+        }
         
         /* Navigation bar */
         .navbar { background-color: #007bff; padding: 0; margin: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -256,7 +274,10 @@
                              margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px solid #007bff; }
         .reservation-item { background: #e7f3ff; border-left: 4px solid #28a745; 
                            padding: 8px 10px; margin-bottom: 8px; font-size: 12px; border-radius: 4px; }
+        .trip-separator { margin: 10px 0 6px 0; padding: 6px 8px; background: #dbeafe; border-left: 4px solid #2563eb; border-radius: 4px; font-size: 12px; font-weight: bold; color: #1e3a8a; }
         .reservation-item p { margin: 2px 0; }
+        .return-time { color: #dc3545; font-weight: bold; }
+        .trip-duration { color: #ff9800; font-weight: bold; }
         .no-reservation { font-style: italic; color: #999; padding: 10px 0; }
         
         .empty-msg { text-align: center; padding: 20px; color: #999; font-style: italic; }
@@ -266,26 +287,31 @@
         .alert-success { background-color: #d4edda; color: #155724; }
         
         @media (max-width: 640px) {
+            body { padding-top: 156px; }
             .container { padding: 16px; }
             .planning-grid { grid-template-columns: 1fr; }
             .vehicle-specs { grid-template-columns: 1fr; }
             .navbar-content { flex-direction: column; gap: 10px; align-items: flex-start; }
+            .etu-banner { font-size: 13px; line-height: 1.4; }
         }
     </style>
 </head>
 <body>
-    <!-- Navigation bar -->
-    <nav class="navbar">
-        <div class="navbar-content">
-            <a href="<%= request.getContextPath() %>" class="navbar-brand">🚗 Gestion de Réservations</a>
-            <div class="navbar-menu">
-                <a href="<%= request.getContextPath() %>/planning/vehicules">📅 Planning</a>
-                <a href="<%= request.getContextPath() %>/reservation/page">📋 Réservations</a>
-                <a href="<%= request.getContextPath() %>/vehicule/get">🚐 Véhicules</a>
-                <a href="<%= request.getContextPath() %>/reservation/add">➕ Ajouter Réservation</a>
+    <div class="top-fixed">
+        <div class="etu-banner">ETU3130 - ETU3158 - ETU3160</div>
+        <!-- Navigation bar -->
+        <nav class="navbar">
+            <div class="navbar-content">
+                <a href="<%= request.getContextPath() %>" class="navbar-brand">🚗 Gestion de Réservations</a>
+                <div class="navbar-menu">
+                    <a href="<%= request.getContextPath() %>/planning/vehicules">📅 Planning</a>
+                    <a href="<%= request.getContextPath() %>/reservation/page">📋 Réservations</a>
+                    <a href="<%= request.getContextPath() %>/vehicule/get">🚐 Véhicules</a>
+                    <a href="<%= request.getContextPath() %>/reservation/add">➕ Ajouter Réservation</a>
+                </div>
             </div>
-        </div>
-    </nav>
+        </nav>
+    </div>
 
     <div class="container">
         <h1>📅 Planification des Véhicules</h1>
@@ -311,6 +337,10 @@
                 <input type="date" id="date" name="date" value="<%= date != null ? date : "" %>" required>
                 <button type="submit">Afficher</button>
             </form>
+            <form method="post" action="<%= request.getContextPath() %>/planning/auto-assign" style="margin-top:10px;">
+                <input type="hidden" name="date" value="<%= date != null ? date : "" %>">
+                <button type="submit">Lancer assignation automatique</button>
+            </form>
         </div>
 
         <% if(planningData != null && !planningData.isEmpty()){ %>
@@ -318,9 +348,15 @@
                 <% for(Map<String,Object> vData : planningData){
                     Vehicule v = (Vehicule) vData.get("vehicule");
                     List<Reservation> reservations = (List<Reservation>) vData.get("reservations");
+                    List<Assignation> assignations = (List<Assignation>) vData.get("assignations");
+                    Integer tripCount = (Integer) vData.get("tripCount");
                     @SuppressWarnings("unchecked")
                     List<Lieu> route = (List<Lieu>) vData.get("route");
                     String airportArrivalTime = (String) vData.get("airportArrivalTime");
+                    @SuppressWarnings("unchecked")
+                    List<String> returnTimes = (List<String>) vData.get("returnTimes");
+                    @SuppressWarnings("unchecked")
+                    List<String> tripDurations = (List<String>) vData.get("tripDurations");
                 %>
                 <div class="vehicle-card">
                     <div class="vehicle-header">
@@ -336,6 +372,10 @@
                             <div class="spec-item">
                                 <span class="spec-label">Type</span>
                                 <span class="spec-value"><%= v.getType() %></span>
+                            </div>
+                            <div class="spec-item">
+                                <span class="spec-label">Trajets du jour</span>
+                                <span class="spec-value"><%= tripCount != null ? tripCount : 0 %></span>
                             </div>
                         </div>
                         
@@ -366,11 +406,26 @@
 
                         <div class="reservations-title">👥 Réservations liées</div>
                         <% if(reservations != null && !reservations.isEmpty()){ %>
-                            <% for(Reservation r : reservations){ %>
+                            <% String lastDeparture = null; %>
+                            <% for(int i = 0; i < reservations.size(); i++){
+                                Reservation r = reservations.get(i);
+                                Assignation a = (assignations != null && i < assignations.size()) ? assignations.get(i) : null;
+                                String returnTime = (returnTimes != null && i < returnTimes.size()) ? returnTimes.get(i) : "--:--";
+                                String tripDuration = (tripDurations != null && i < tripDurations.size()) ? tripDurations.get(i) : "--:--";
+                                String departureTime = (a != null && a.getDateDepart() != null) ? a.getDateDepart() : "--:--";
+                            %>
+                                <% if(lastDeparture == null || !lastDeparture.equals(departureTime)){ %>
+                                    <div class="trip-separator">Trajet départ: <%= departureTime %> | Retour: <%= returnTime %></div>
+                                    <% lastDeparture = departureTime; %>
+                                <% } %>
                                 <div class="reservation-item">
                                     <p>👤 Client: <strong><%= r.getIdClient() %></strong></p>
-                                    <p>🚶 Passagers: <strong><%= r.getNbrPassager() %></strong></p>
-                                    <p>⏰ Arrivée: <%= r.getDateHeureArrivee() %></p>
+                                    <p>🚶 Passagers assignés: <strong><%= a != null ? a.getNbrPassagerAssigne() : r.getNbrPassager() %></strong>
+                                       / Réservation: <strong><%= r.getNbrPassager() %></strong></p>
+                                    <p>⏰ Arrivée client: <%= r.getDateHeureArrivee() %></p>
+                                    <p>🚐 Départ trajet: <%= departureTime %></p>
+                                    <p>⚙️ Durée trajet: <span class="trip-duration"><%= tripDuration %></span></p>
+                                    <p>🔁 Retour: <span class="return-time"><%= returnTime %></span></p>
                                 </div>
                             <% } %>
                         <% } else { %>

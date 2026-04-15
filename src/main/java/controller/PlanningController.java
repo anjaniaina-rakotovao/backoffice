@@ -58,6 +58,7 @@ public class PlanningController {
                 Map<String, Object> data = new HashMap<>();
 
                 data.put("vehicule", v);
+                data.put("tripCount", AssignationModel.countTripsByVehicleAndDate(v.getId(), date));
 
                 List<Reservation> vehiculeReservations = new ArrayList<>();
                 List<Assignation> vAssignations = new ArrayList<>();
@@ -82,6 +83,48 @@ public class PlanningController {
                 if (!vehiculeReservations.isEmpty()) {
                     data.put("reservations", vehiculeReservations);
                     data.put("assignations", vAssignations);
+
+                    // Calculer les heures de retour pour chaque réservation
+                    List<String> returnTimes = new ArrayList<>();
+                    List<String> tripDurations = new ArrayList<>();
+                    try {
+                        Lieu airportLieu = LieuModel.findAirport();
+                        if (airportLieu != null) {
+                            for (Reservation r : vehiculeReservations) {
+                                Lieu hotelLieu = LieuModel.findById(r.getIdHotelArrivee());
+                                if (hotelLieu != null && r.getDateHeureArrivee() != null) {
+                                    // Calculer le temps de trajet de l'aéroport à l'hôtel
+                                    long tripTimeMinutes = AssignationModel.calculateTripTimeMinutes(
+                                            airportLieu.getId(), hotelLieu.getId());
+
+                                    // Formater la durée du trajet (HH:MM)
+                                    long hours = tripTimeMinutes / 60;
+                                    long minutes = tripTimeMinutes % 60;
+                                    String durationStr = String.format("%02d:%02d", hours, minutes);
+                                    tripDurations.add(durationStr);
+
+                                    // Ajouter ce temps à l'heure d'arrivée pour obtenir l'heure de retour
+                                    try {
+                                        java.time.LocalDateTime arrival = java.time.LocalDateTime
+                                                .parse(r.getDateHeureArrivee().replace(" ", "T"));
+                                        java.time.LocalDateTime returnTime = arrival.plusMinutes(tripTimeMinutes);
+                                        returnTimes.add(returnTime.toString().replace("T", " "));
+                                    } catch (Exception e) {
+                                        returnTimes.add("--:--");
+                                    }
+                                } else {
+                                    returnTimes.add("--:--");
+                                    tripDurations.add("--:--");
+                                }
+                            }
+                        }
+                        data.put("returnTimes", returnTimes);
+                        data.put("tripDurations", tripDurations);
+                    } catch (Exception e) {
+                        // Si erreur, ajouter liste vide
+                        data.put("returnTimes", new ArrayList<>());
+                        data.put("tripDurations", new ArrayList<>());
+                    }
 
                     // Calculer le trajet optimal et l'heure d'arrivée à l'aéroport
                     try {

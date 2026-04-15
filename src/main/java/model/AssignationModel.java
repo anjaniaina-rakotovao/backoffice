@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,18 @@ public class AssignationModel {
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
+    private static class ReservationWork {
+        private final Reservation reservation;
+        private int remainingPassengers;
+        private final boolean fromPending;
+
+        private ReservationWork(Reservation reservation, int remainingPassengers, boolean fromPending) {
+            this.reservation = reservation;
+            this.remainingPassengers = remainingPassengers;
+            this.fromPending = fromPending;
+        }
+    }
+
     /**
      * Récupère toutes les assignations pour une date donnée
      */
@@ -41,7 +54,8 @@ public class AssignationModel {
         List<Assignation> list = new ArrayList<>();
         // Find assignations for reservations occurring on the given date.
         // We join with reservation and compare DATE(reservation.date_heure_arrivee) = ?
-        String sql = "SELECT a.id, a.id_vehicule, a.id_reservation, a.date_assignation, a.date_depart " +
+        String sql = "SELECT a.id, a.id_vehicule, a.id_reservation, a.nbr_passager_assigne, a.date_assignation, a.date_depart "
+                +
                 "FROM assignation a " +
                 "JOIN reservation r ON r.id = a.id_reservation " +
                 "WHERE DATE(r.date_heure_arrivee) = ? " +
@@ -57,6 +71,7 @@ public class AssignationModel {
                             rs.getInt("id"),
                             rs.getInt("id_vehicule"),
                             rs.getInt("id_reservation"),
+                            rs.getInt("nbr_passager_assigne"),
                             rs.getString("date_assignation"),
                             rs.getString("date_depart")));
                 }
@@ -67,14 +82,18 @@ public class AssignationModel {
 
     /**
      * Récupère les véhicules disponibles à une date/heure donnée
-     * Un véhicule est disponible s'il n'est pas assigné à une réservation à ce
-     * moment
+     * Un véhicule est disponible si:
+     * 1. Il a assez de places
+     * 2. Sa date_disponibilite est avant ou égale à dateHeureArrivee
+     * 3. Il n'est pas assigné à une autre réservation à ce moment
      */
     public static List<Vehicule> findAvailableVehicles(String dateHeureArrivee, int nbrPassager) throws SQLException {
         List<Vehicule> list = new ArrayList<>();
-        String sql = "SELECT v.id, v.reference, v.nbr_place, v.type " +
+        String sql = "SELECT v.id, v.reference, v.nbr_place, v.type, COALESCE(v.date_disponibilite, '1900-01-01 00:00:00') AS date_disponibilite "
+                +
                 "FROM vehicule v " +
                 "WHERE v.nbr_place >= ? " +
+                "AND COALESCE(v.date_disponibilite, '1900-01-01 00:00:00') <= ? " +
                 "AND v.id NOT IN ( " +
                 "  SELECT id_vehicule FROM assignation " +
                 "  WHERE date_assignation <= ? AND (date_depart IS NULL OR date_depart > ?) " +
@@ -88,14 +107,17 @@ public class AssignationModel {
             Timestamp ts = Timestamp.valueOf(dateHeureArrivee);
             ps.setTimestamp(2, ts);
             ps.setTimestamp(3, ts);
+            ps.setTimestamp(4, ts);
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
+                    String dateDisp = rs.getTimestamp("date_disponibilite").toString();
                     list.add(new Vehicule(
                             rs.getInt("id"),
                             rs.getString("reference"),
                             rs.getInt("nbr_place"),
-                            rs.getString("type")));
+                            rs.getString("type"),
+                            dateDisp));
                 }
             }
         }
@@ -121,22 +143,36 @@ public class AssignationModel {
     // }
 
     public static void assignVehicle(int idVehicule, int idReservation, String dateDepart) throws SQLException {
-        String sql = "INSERT INTO assignation (id_vehicule, id_reservation, date_depart) VALUES (?, ?, ?)";
+        Reservation reservation = ReservationModel.findById(idReservation);
+        int nbrPassagerAssigne = reservation != null ? reservation.getNbrPassager() : 1;
+        assignVehicle(idVehicule, idReservation, dateDepart, nbrPassagerAssigne);
+    }
+
+    public static void assignVehicle(int idVehicule, int idReservation, String dateDepart, int nbrPassagerAssigne)
+            throws SQLException {
+        String sql = "INSERT INTO assignation (id_vehicule, id_reservation, nbr_passager_assigne, date_depart) VALUES (?, ?, ?, ?)";
         try (Connection c = DB.getConnection();
                 PreparedStatement ps = c.prepareStatement(sql)) {
 
             ps.setInt(1, idVehicule);
             ps.setInt(2, idReservation);
+            ps.setInt(3, nbrPassagerAssigne);
 
             if (dateDepart == null) {
-                ps.setNull(3, java.sql.Types.TIMESTAMP);
+                ps.setNull(4, java.sql.Types.TIMESTAMP);
             } else {
-                ps.setTimestamp(3, Timestamp.valueOf(dateDepart));
+                ps.setTimestamp(4, Timestamp.valueOf(dateDepart));
             }
 
             ps.executeUpdate();
 
-            System.out.println("Assignation créée: vehicule=" + idVehicule + " reservation=" + idReservation);
+            System.out.println("Assignation créée: vehicule=" + idVehicule + " reservation=" + idReservation
+                    + " passagersAssignes=" + nbrPassagerAssigne);
+
+            // Mise à jour de la disponibilité du véhicule après assignation
+            if (dateDepart != null) {
+                updateVehicleAvailability(idVehicule, dateDepart);
+            }
         }
     }
 
@@ -188,6 +224,9 @@ public class AssignationModel {
     // }
 
     public static void autoAssignVehicles(String date) throws SQLException {
+        // Recalcul idempotent pour la date: on repart d'un état propre.
+        deleteAssignmentsForReservationDate(date);
+
         List<Reservation> reservations = ReservationModel.findByDateString(date);
         System.out.println("autoAssignVehicles: " + reservations.size()
                 + " réservations pour date=" + date + " (groupement=" + WAITING_TIME_MINUTES + " min)");
@@ -198,56 +237,172 @@ public class AssignationModel {
 
         // Récupère tous les véhicules une seule fois
         List<Vehicule> allVehicles = VehiculeModel.findAll();
-        // Charge initiale: places déjà occupées par des réservations déjà assignées ce
-        // jour.
-        Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
+        Map<Integer, Integer> assignedByReservation = getAssignedPassengerCountByReservationForDate(date);
 
         TreeMap<LocalDateTime, List<Reservation>> groupedByInterval = groupByIntervalInternal(reservations);
-        List<Reservation> pending = new ArrayList<>();
+        List<ReservationWork> pending = new ArrayList<>();
 
         for (Map.Entry<LocalDateTime, List<Reservation>> intervalEntry : groupedByInterval.entrySet()) {
             LocalDateTime intervalStart = intervalEntry.getKey();
             List<Reservation> currentIntervalReservations = intervalEntry.getValue();
 
-            List<Reservation> toProcess = new ArrayList<>(pending);
-            toProcess.addAll(currentIntervalReservations);
-            toProcess.sort((a, b) -> Integer.compare(b.getNbrPassager(), a.getNbrPassager()));
-
-            LocalDateTime departureDateTime = findLatestArrival(currentIntervalReservations);
-            if (departureDateTime == null) {
-                departureDateTime = intervalStart;
+            List<ReservationWork> toProcess = new ArrayList<>();
+            for (ReservationWork p : pending) {
+                toProcess.add(new ReservationWork(p.reservation, p.remainingPassengers, true));
             }
+            for (Reservation res : currentIntervalReservations) {
+                int alreadyAssigned = assignedByReservation.getOrDefault(res.getId(), 0);
+                int remaining = res.getNbrPassager() - alreadyAssigned;
+                if (remaining > 0) {
+                    toProcess.add(new ReservationWork(res, remaining, false));
+                }
+            }
+            toProcess.sort((a, b) -> {
+                int pendingCmp = Boolean.compare(b.fromPending, a.fromPending);
+                if (pendingCmp != 0) {
+                    return pendingCmp;
+                }
+                return Integer.compare(b.remainingPassengers, a.remainingPassengers);
+            });
+
+            // Règle métier: heure de base = début d'intervalle (pas l'arrivée réelle).
+            // Décalage court de départ pour groupe multi-réservations.
+            LocalDateTime departureDateTime = intervalStart;
+            if (currentIntervalReservations.size() > 1) {
+                try {
+                    Reservation firstOfGroup = currentIntervalReservations.get(0);
+                    Lieu airport = LieuModel.findAirport();
+                    if (airport != null && firstOfGroup != null) {
+                        long tripTimeMinutes = calculateTripTimeMinutes(
+                                airport.getId(),
+                                firstOfGroup.getIdHotelArrivee());
+                        // Décaler pour donner du temps pour le trajet aéroport → premier hôtel
+                        // Pas de limite haute: utiliser le temps réel du trajet
+                        departureDateTime = departureDateTime.plusMinutes(Math.max(0L, tripTimeMinutes));
+                    }
+                } catch (Exception e) {
+                    // fallback: garder departureDateTime sans décalage
+                }
+            }
+
             String departureForInterval = departureDateTime.format(DATE_TIME_FORMATTER);
+
+            // Disponibilité réelle des véhicules à l'heure de départ de l'intervalle.
+            List<Vehicule> intervalVehicles = new ArrayList<>();
+            for (Vehicule v : allVehicles) {
+                String dateDisponibilite = v.getDateDisponibilite();
+                if (dateDisponibilite == null || dateDisponibilite.trim().isEmpty()) {
+                    intervalVehicles.add(v);
+                    continue;
+                }
+                LocalDateTime dispo = parseReservationDateTime(dateDisponibilite);
+                if (!dispo.isAfter(departureDateTime)) {
+                    intervalVehicles.add(v);
+                }
+            }
+
+            // Charge locale à l'intervalle: un véhicule repart avec sa capacité complète
+            // s'il est disponible à ce créneau.
+            Map<Integer, Integer> vehicleLoad = new HashMap<>();
+            // Hôtel principal traité par véhicule dans cet intervalle
+            Map<Integer, Integer> vehicleHotelByInterval = new HashMap<>();
 
             System.out.println("Intervalle " + intervalStart + " : " + toProcess.size()
                     + " réservations à traiter (" + pending.size() + " en priorité reportée)");
 
-            List<Reservation> nextPending = new ArrayList<>();
+            List<ReservationWork> nextPending = new ArrayList<>();
 
-            for (Reservation res : toProcess) {
-                Assignation existing = findByReservation(res.getId());
-                if (existing != null) {
-                    continue;
+            // Boucle d'assignation : continuer tant qu'on peut assigner quelque chose
+            // Retrier à chaque itération pour prioriser les petites réservations complètes
+            boolean assignmentMade = true;
+            int passIndex = 0;
+            while (assignmentMade) {
+                assignmentMade = false;
+
+                // Passage 0: placer d'abord les gros groupes.
+                // Passages suivants: prioriser les petits restes pour finir le remplissage.
+                if (passIndex == 0) {
+                    toProcess.sort((a, b) -> {
+                        int pendingCmp = Boolean.compare(b.fromPending, a.fromPending);
+                        if (pendingCmp != 0) {
+                            return pendingCmp;
+                        }
+                        return Integer.compare(b.remainingPassengers, a.remainingPassengers);
+                    });
+                } else {
+                    toProcess.sort((a, b) -> {
+                        int pendingCmp = Boolean.compare(b.fromPending, a.fromPending);
+                        if (pendingCmp != 0) {
+                            return pendingCmp;
+                        }
+                        return Integer.compare(a.remainingPassengers, b.remainingPassengers);
+                    });
                 }
 
-                // Règle prioritaire: remplir d'abord les véhicules déjà entamés.
-                Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, res.getNbrPassager(), date);
-                if (selected == null) {
-                    // Aucun véhicule partiellement rempli ne convient: on ouvre alors la sélection
-                    // globale.
-                    selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager(), date);
+                Iterator<ReservationWork> it = toProcess.iterator();
+                while (it.hasNext()) {
+                    ReservationWork work = it.next();
+
+                    if (work.remainingPassengers <= 0) {
+                        it.remove();
+                        continue;
+                    }
+
+                    // Important: en passage 0 on privilégie le gros bloc complet.
+                    // En passages suivants, on finit les restes par petits morceaux.
+                    while (work.remainingPassengers > 0) {
+                        int neededForPartial = (passIndex == 0) ? work.remainingPassengers : 1;
+                        Vehicule selected = findPartiallyFilledVehiclePreferHotel(
+                                intervalVehicles,
+                                vehicleLoad,
+                                neededForPartial,
+                                date,
+                                work.reservation.getIdHotelArrivee(),
+                                vehicleHotelByInterval);
+
+                        if (selected == null) {
+                            selected = selectBestVehicleByRemainingSeats(intervalVehicles, vehicleLoad,
+                                    work.remainingPassengers, date);
+                        }
+
+                        if (selected == null) {
+                            break;
+                        }
+
+                        int capacityLeft = selected.getNbrPlace() - vehicleLoad.getOrDefault(selected.getId(), 0);
+                        if (capacityLeft <= 0) {
+                            break;
+                        }
+
+                        int chunk = Math.min(work.remainingPassengers, capacityLeft);
+
+                        assignVehicle(selected.getId(), work.reservation.getId(), departureForInterval, chunk);
+
+                        vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + chunk);
+                        assignedByReservation.put(work.reservation.getId(),
+                                assignedByReservation.getOrDefault(work.reservation.getId(), 0) + chunk);
+                        work.remainingPassengers -= chunk;
+                        assignmentMade = true;
+
+                        LocalDateTime nextDisponibility = departureDateTime.plusMinutes(WAITING_TIME_MINUTES);
+                        selected.setDateDisponibilite(nextDisponibility.format(DATE_TIME_FORMATTER));
+
+                        vehicleHotelByInterval.putIfAbsent(selected.getId(), work.reservation.getIdHotelArrivee());
+                    }
+
+                    // Retirer si assignée entièrement
+                    if (work.remainingPassengers == 0) {
+                        it.remove();
+                    }
                 }
 
-                if (selected == null) {
-                    nextPending.add(res);
-                    continue;
-                }
-
-                // Le départ est fixé à la dernière arrivée du groupement courant.
-                assignVehicle(selected.getId(), res.getId(), departureForInterval);
-                vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + res.getNbrPassager());
+                passIndex++;
             }
 
+            // Ajouter les réservations toujours non assignées au pending
+            for (ReservationWork w : toProcess) {
+                nextPending.add(new ReservationWork(w.reservation, w.remainingPassengers, true));
+            }
             pending = nextPending;
         }
 
@@ -330,13 +485,24 @@ public class AssignationModel {
         return latest;
     }
 
+    private static LocalDateTime findEarliestArrival(List<Reservation> reservations) {
+        LocalDateTime earliest = null;
+        for (Reservation r : reservations) {
+            LocalDateTime arrival = parseReservationDateTime(r.getDateHeureArrivee());
+            if (earliest == null || arrival.isBefore(earliest)) {
+                earliest = arrival;
+            }
+        }
+        return earliest;
+    }
+
     /**
      * Retourne la charge (total passagers assignés) par véhicule
      * pour les réservations arrivées à la date donnée.
      */
     private static Map<Integer, Integer> getVehiclePassengerLoad(String date) throws SQLException {
         Map<Integer, Integer> load = new HashMap<>();
-        String sql = "SELECT a.id_vehicule, SUM(r.nbr_passager) AS total_passagers " +
+        String sql = "SELECT a.id_vehicule, SUM(a.nbr_passager_assigne) AS total_passagers " +
                 "FROM assignation a " +
                 "JOIN reservation r ON r.id = a.id_reservation " +
                 "WHERE DATE(r.date_heure_arrivee) = ? " +
@@ -351,6 +517,26 @@ public class AssignationModel {
             }
         }
         return load;
+    }
+
+    private static Map<Integer, Integer> getAssignedPassengerCountByReservationForDate(String date)
+            throws SQLException {
+        Map<Integer, Integer> assigned = new HashMap<>();
+        String sql = "SELECT a.id_reservation, SUM(a.nbr_passager_assigne) AS total_assignes " +
+                "FROM assignation a " +
+                "JOIN reservation r ON r.id = a.id_reservation " +
+                "WHERE DATE(r.date_heure_arrivee) = ? " +
+                "GROUP BY a.id_reservation";
+        try (Connection c = DB.getConnection();
+                PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setDate(1, java.sql.Date.valueOf(date));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    assigned.put(rs.getInt("id_reservation"), rs.getInt("total_assignes"));
+                }
+            }
+        }
+        return assigned;
     }
 
     /**
@@ -386,6 +572,53 @@ public class AssignationModel {
     }
 
     /**
+     * Variante de findPartiallyFilledVehicle avec préférence d'hôtel:
+     * - priorité aux véhicules déjà utilisés dans l'intervalle pour le même hôtel
+     * - fallback: tous véhicules partiellement remplis
+     */
+    private static Vehicule findPartiallyFilledVehiclePreferHotel(
+            List<Vehicule> allVehicles,
+            Map<Integer, Integer> vehicleLoad,
+            int nbrPassager,
+            String date,
+            int targetHotelId,
+            Map<Integer, Integer> vehicleHotelByInterval) throws SQLException {
+
+        List<Vehicule> preferred = new ArrayList<>();
+        int bestPreferredRemaining = Integer.MAX_VALUE;
+
+        for (Vehicule v : allVehicles) {
+            int currentLoad = vehicleLoad.getOrDefault(v.getId(), 0);
+            if (currentLoad == 0) {
+                continue;
+            }
+
+            Integer vehicleHotel = vehicleHotelByInterval.get(v.getId());
+            if (vehicleHotel == null || vehicleHotel != targetHotelId) {
+                continue;
+            }
+
+            int remaining = v.getNbrPlace() - currentLoad;
+            if (remaining >= nbrPassager) {
+                int remainingAfter = remaining - nbrPassager;
+                if (remainingAfter < bestPreferredRemaining) {
+                    bestPreferredRemaining = remainingAfter;
+                    preferred.clear();
+                    preferred.add(v);
+                } else if (remainingAfter == bestPreferredRemaining) {
+                    preferred.add(v);
+                }
+            }
+        }
+
+        if (!preferred.isEmpty()) {
+            return pickByTripCountThenTypeThenRandom(preferred, date);
+        }
+
+        return findPartiallyFilledVehicle(allVehicles, vehicleLoad, nbrPassager, date);
+    }
+
+    /**
      * Sélectionne le meilleur véhicule en tenant compte des places déjà occupées.
      * - véhicule admissible: capacité restante >= nbrPassager
      * - priorité: places restantes minimales après affectation
@@ -413,10 +646,34 @@ public class AssignationModel {
             }
         }
 
-        if (candidates.isEmpty()) {
+        if (!candidates.isEmpty()) {
+            return pickByTripCountThenTypeThenRandom(candidates, date);
+        }
+
+        // Split fallback: aucun véhicule ne peut accueillir la réservation complète,
+        // prendre le véhicule avec le plus de places restantes pour en affecter une
+        // partie.
+        List<Vehicule> splitCandidates = new ArrayList<>();
+        int bestRemaining = -1;
+        for (Vehicule v : allVehicles) {
+            int occupied = vehicleLoad.getOrDefault(v.getId(), 0);
+            int remaining = v.getNbrPlace() - occupied;
+            if (remaining <= 0) {
+                continue;
+            }
+            if (remaining > bestRemaining) {
+                bestRemaining = remaining;
+                splitCandidates.clear();
+                splitCandidates.add(v);
+            } else if (remaining == bestRemaining) {
+                splitCandidates.add(v);
+            }
+        }
+
+        if (splitCandidates.isEmpty()) {
             return null;
         }
-        return pickByTripCountThenTypeThenRandom(candidates, date);
+        return pickByTripCountThenTypeThenRandom(splitCandidates, date);
     }
 
     /**
@@ -460,11 +717,12 @@ public class AssignationModel {
             }
         }
 
-        Random rnd = new Random();
         if (!dieselCandidates.isEmpty()) {
-            return dieselCandidates.get(rnd.nextInt(dieselCandidates.size()));
+            dieselCandidates.sort(Comparator.comparingInt(Vehicule::getId));
+            return dieselCandidates.get(0);
         }
-        return leastTripCandidates.get(rnd.nextInt(leastTripCandidates.size()));
+        leastTripCandidates.sort(Comparator.comparingInt(Vehicule::getId));
+        return leastTripCandidates.get(0);
     }
 
     /**
@@ -523,25 +781,34 @@ public class AssignationModel {
         if (res == null)
             return;
         System.out.println("autoAssignForReservation: reservation=" + res);
-        // Vérifie si cette réservation a déjà une assignation
-        Assignation existing = findByReservation(res.getId());
-        if (existing != null) {
-            System.out.println("autoAssignForReservation: already assigned -> " + existing.getId());
-            return; // déjà assignée
-        }
 
         String date = res.getDateHeureArrivee().substring(0, 10);
+        int alreadyAssigned = findAssignedPassengerCountByReservation().getOrDefault(res.getId(), 0);
+        int remaining = res.getNbrPassager() - alreadyAssigned;
+        if (remaining <= 0) {
+            return;
+        }
+
         List<Vehicule> allVehicles = VehiculeModel.findAll();
         Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
-        Vehicule selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager(), date);
-
-        System.out.println("autoAssignForReservation: selected=" + (selected != null ? selected.getId() : "null"));
-        if (selected != null) {
-            // 🚨 Correction : passer la date de réservation comme date_depart
-            assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee());
-        } else {
-            System.out.println(
-                    "autoAssignForReservation: no vehicle with remaining seats for reservation " + res.getId());
+        while (remaining > 0) {
+            Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, 1, date);
+            if (selected == null) {
+                selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, remaining, date);
+            }
+            if (selected == null) {
+                System.out.println(
+                        "autoAssignForReservation: no vehicle with remaining seats for reservation " + res.getId());
+                break;
+            }
+            int capacityLeft = selected.getNbrPlace() - vehicleLoad.getOrDefault(selected.getId(), 0);
+            if (capacityLeft <= 0) {
+                break;
+            }
+            int chunk = Math.min(remaining, capacityLeft);
+            assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee(), chunk);
+            vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + chunk);
+            remaining -= chunk;
         }
     }
 
@@ -591,30 +858,51 @@ public class AssignationModel {
             return false;
 
         String date = res.getDateHeureArrivee().substring(0, 10);
-        List<Vehicule> allVehicles = VehiculeModel.findAll();
-        Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
-        Vehicule selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, res.getNbrPassager(), date);
-
-        if (selected != null) {
-            // 🚨 Correction : passer la date de réservation comme date_depart
-            assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee());
-            System.out.println("forceAssignReservation: assignation created veh="
-                    + selected.getId() + " res=" + res.getId());
+        int alreadyAssigned = findAssignedPassengerCountByReservation().getOrDefault(res.getId(), 0);
+        int remaining = res.getNbrPassager() - alreadyAssigned;
+        if (remaining <= 0) {
             return true;
         }
 
-        System.out.println("forceAssignReservation: aucun véhicule avec places disponibles pour res="
-                + res.getId());
+        List<Vehicule> allVehicles = VehiculeModel.findAll();
+        Map<Integer, Integer> vehicleLoad = getVehiclePassengerLoad(date);
+        boolean assignedAny = false;
+        while (remaining > 0) {
+            Vehicule selected = findPartiallyFilledVehicle(allVehicles, vehicleLoad, 1, date);
+            if (selected == null) {
+                selected = selectBestVehicleByRemainingSeats(allVehicles, vehicleLoad, remaining, date);
+            }
+            if (selected == null) {
+                break;
+            }
 
-        return false;
+            int capacityLeft = selected.getNbrPlace() - vehicleLoad.getOrDefault(selected.getId(), 0);
+            if (capacityLeft <= 0) {
+                break;
+            }
+
+            int chunk = Math.min(remaining, capacityLeft);
+            assignVehicle(selected.getId(), res.getId(), res.getDateHeureArrivee(), chunk);
+            vehicleLoad.put(selected.getId(), vehicleLoad.getOrDefault(selected.getId(), 0) + chunk);
+            remaining -= chunk;
+            assignedAny = true;
+        }
+
+        if (remaining <= 0) {
+            return true;
+        }
+
+        System.out.println("forceAssignReservation: assignation partielle/indisponible pour res=" + res.getId()
+                + " restant=" + remaining + " passager(s)");
+        return assignedAny;
     }
 
     /**
      * Récupère l'assignation pour une réservation
      */
     public static Assignation findByReservation(int idReservation) throws SQLException {
-        String sql = "SELECT id, id_vehicule, id_reservation, date_assignation, date_depart " +
-                "FROM assignation WHERE id_reservation = ?";
+        String sql = "SELECT id, id_vehicule, id_reservation, nbr_passager_assigne, date_assignation, date_depart " +
+                "FROM assignation WHERE id_reservation = ? ORDER BY id ASC LIMIT 1";
         try (Connection c = DB.getConnection();
                 PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setInt(1, idReservation);
@@ -624,6 +912,7 @@ public class AssignationModel {
                             rs.getInt("id"),
                             rs.getInt("id_vehicule"),
                             rs.getInt("id_reservation"),
+                            rs.getInt("nbr_passager_assigne"),
                             rs.getString("date_assignation"),
                             rs.getString("date_depart"));
                 }
@@ -637,9 +926,11 @@ public class AssignationModel {
      */
     public static List<Assignation> findByVehicleAndDate(int idVehicule, String date) throws SQLException {
         List<Assignation> list = new ArrayList<>();
-        String sql = "SELECT id, id_vehicule, id_reservation, date_assignation, date_depart " +
-                "FROM assignation " +
-                "WHERE id_vehicule = ? AND DATE(date_assignation) = ? " +
+        String sql = "SELECT a.id, a.id_vehicule, a.id_reservation, a.nbr_passager_assigne, a.date_assignation, a.date_depart "
+                +
+                "FROM assignation a " +
+                "JOIN reservation r ON r.id = a.id_reservation " +
+                "WHERE a.id_vehicule = ? AND DATE(r.date_heure_arrivee) = ? " +
                 "ORDER BY date_assignation ASC";
         try (Connection c = DB.getConnection();
                 PreparedStatement ps = c.prepareStatement(sql)) {
@@ -651,6 +942,7 @@ public class AssignationModel {
                             rs.getInt("id"),
                             rs.getInt("id_vehicule"),
                             rs.getInt("id_reservation"),
+                            rs.getInt("nbr_passager_assigne"),
                             rs.getString("date_assignation"),
                             rs.getString("date_depart")));
                 }
@@ -699,6 +991,23 @@ public class AssignationModel {
     }
 
     /**
+     * Retourne la somme des passagers déjà assignés par réservation (toutes dates).
+     */
+    public static Map<Integer, Integer> findAssignedPassengerCountByReservation() throws SQLException {
+        Map<Integer, Integer> map = new HashMap<>();
+        String sql = "SELECT id_reservation, SUM(nbr_passager_assigne) AS total_assignes " +
+                "FROM assignation GROUP BY id_reservation";
+        try (Connection c = DB.getConnection();
+                PreparedStatement ps = c.prepareStatement(sql);
+                ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                map.put(rs.getInt("id_reservation"), rs.getInt("total_assignes"));
+            }
+        }
+        return map;
+    }
+
+    /**
      * Supprime une assignation
      */
     public static void delete(int id) throws SQLException {
@@ -706,6 +1015,16 @@ public class AssignationModel {
         try (Connection c = DB.getConnection();
                 PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setInt(1, id);
+            ps.executeUpdate();
+        }
+    }
+
+    public static void deleteAssignmentsForReservationDate(String date) throws SQLException {
+        String sql = "DELETE FROM assignation a USING reservation r " +
+                "WHERE a.id_reservation = r.id AND DATE(r.date_heure_arrivee) = ?";
+        try (Connection c = DB.getConnection();
+                PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setDate(1, java.sql.Date.valueOf(date));
             ps.executeUpdate();
         }
     }
@@ -854,5 +1173,73 @@ public class AssignationModel {
         }
 
         return Math.max(0L, Math.round((totalDistanceKm / AVERAGE_SPEED_KMH) * 60.0));
+    }
+
+    /**
+     * Calcule le temps de trajet en minutes entre deux lieux spécifiques
+     * basé sur la distance et une vitesse moyenne fixe.
+     */
+    public static long calculateTripTimeMinutes(int fromLocationId, int toLocationId) throws SQLException {
+        double distance = LieuModel.getDistance(fromLocationId, toLocationId);
+
+        // Fallback si la route inverse est la seule renseignée en base
+        if (distance == Double.MAX_VALUE) {
+            distance = LieuModel.getDistance(toLocationId, fromLocationId);
+        }
+
+        if (distance != Double.MAX_VALUE && distance > 0) {
+            return Math.max(0L, Math.round((distance / AVERAGE_SPEED_KMH) * 60.0));
+        }
+
+        return 0L;
+    }
+
+    /**
+     * Met à jour la date de disponibilité d'un véhicule
+     * Cette date représente quand le véhicule redevient entièrement libre,
+     * en fonction de la date de départ et du temps estimé du trajet.
+     * 
+     * @param idVehicule       L'ID du véhicule
+     * @param dateDepart       La date/heure de départ du trajet (format: YYYY-MM-DD
+     *                         HH:MM:SS)
+     * @param estimatedMinutes La durée estimée du trajet en minutes
+     */
+    public static void updateVehicleAvailability(int idVehicule, String dateDepart, long estimatedMinutes)
+            throws SQLException {
+        if (dateDepart == null) {
+            return; // Ne pas mettre à jour si pas de date de départ
+        }
+
+        try {
+            LocalDateTime departure = LocalDateTime.parse(dateDepart, DATE_TIME_FORMATTER);
+            LocalDateTime availability = departure.plusMinutes(estimatedMinutes);
+            String availabilityStr = availability.format(DATE_TIME_FORMATTER);
+
+            String sql = "UPDATE vehicule SET date_disponibilite = ? WHERE id = ?";
+            try (Connection c = DB.getConnection();
+                    PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setTimestamp(1, Timestamp.valueOf(availabilityStr));
+                ps.setInt(2, idVehicule);
+                ps.executeUpdate();
+
+                System.out.println("Vehicle availability updated: vehicleId=" + idVehicule +
+                        " newAvailability=" + availabilityStr);
+            }
+        } catch (Exception e) {
+            System.err.println("Error updating vehicle availability: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Met à jour la date de disponibilité d'un véhicule avec une durée par défaut
+     * Si la durée estimée n'est pas fournie, on utilise 30 minutes
+     * 
+     * @param idVehicule L'ID du véhicule
+     * @param dateDepart La date/heure de départ du trajet
+     */
+    public static void updateVehicleAvailability(int idVehicule, String dateDepart)
+            throws SQLException {
+        updateVehicleAvailability(idVehicule, dateDepart, WAITING_TIME_MINUTES);
     }
 }
